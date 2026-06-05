@@ -1,15 +1,31 @@
-import { ChatAPIEntry } from "@/features/chat-page/chat-services/chat-api/chat-api";
-import { UserPrompt } from "@/features/chat-page/chat-services/models";
+import { streamText } from "ai";
+import { createAzure } from "@ai-sdk/azure";
+import {
+  DefaultAzureCredential,
+  getBearerTokenProvider,
+} from "@azure/identity";
 
 export async function POST(req: Request) {
-  const formData = await req.formData();
-  const content = formData.get("content") as unknown as string;
-  const multimodalImage = formData.get("image-base64") as unknown as string;
+  const { messages } = await req.json();
 
-  const userPrompt: UserPrompt = {
-    ...JSON.parse(content),
-    multimodalImage,
-  };
+  const credential = new DefaultAzureCredential();
+  const tokenProvider = getBearerTokenProvider(
+    credential,
+    "https://cognitiveservices.azure.com/.default"
+  );
 
-  return await ChatAPIEntry(userPrompt, req.signal);
+  const azure = createAzure({
+    resourceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME!,
+    apiVersion: "2025-01-01-preview",
+    apiKey: undefined,
+    // @ts-expect-error — azureADTokenProvider ikke i type endnu
+    azureADTokenProvider: tokenProvider,
+  });
+
+  const result = await streamText({
+    model: azure(process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME!),
+    messages,
+  });
+
+  return result.toDataStreamResponse();
 }

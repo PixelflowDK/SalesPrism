@@ -82,8 +82,8 @@ var llmDeployments = [
       version: chatGptModelVersion
     }
     sku: {
-      name: 'GlobalStandard'
-      capacity: chatGptDeploymentCapacity
+      name: 'DataZoneStandard'
+      capacity: 30
     }
   }
   {

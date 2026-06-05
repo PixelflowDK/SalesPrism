@@ -391,8 +391,8 @@
                   "version": "[parameters('chatGptModelVersion')]"
                 },
                 "sku": {
-                  "name": "GlobalStandard",
-                  "capacity": "[parameters('chatGptDeploymentCapacity')]"
+                  "name": "DataZoneStandard",
+                  "capacity": 30
                 }
               },
               {

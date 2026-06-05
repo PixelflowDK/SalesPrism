@@ -36,3 +36,11 @@ next-env.d.ts
 infra/aad_setup.sh
 .vscode
 infra/main.parameters.example.json
+
+# SalesPrism — secrets og lokale env-filer
+.env.local
+.env.*.local
+src/.env.local
+infra/main.parameters.json
+*.bicepparam
+!infra/environments/example.bicepparam
