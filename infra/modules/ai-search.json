@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "14047735501010680945"
+    }
+  },
+  "parameters": {
+    "customerSlug": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "object"
+    },
+    "aiSearchSku": {
+      "type": "string",
+      "allowedValues": [
+        "basic",
+        "standard"
+      ]
+    }
+  },
+  "variables": {
+    "searchName": "[format('srch-azurechat-{0}', parameters('customerSlug'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Search/searchServices",
+      "apiVersion": "2023-11-01",
+      "name": "[variables('searchName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "sku": {
+        "name": "[parameters('aiSearchSku')]"
+      },
+      "properties": {
+        "replicaCount": 1,
+        "partitionCount": 1,
+        "publicNetworkAccess": "disabled"
+      }
+    }
+  ],
+  "outputs": {
+    "aiSearchId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Search/searchServices', variables('searchName'))]"
+    },
+    "aiSearchEndpoint": {
+      "type": "string",
+      "value": "[format('https://{0}.search.windows.net', variables('searchName'))]"
+    }
+  }
+}

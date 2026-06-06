@@ -1,0 +1,80 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "11334429613543943763"
+    }
+  },
+  "parameters": {
+    "customerSlug": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "object"
+    },
+    "aiModelTier": {
+      "type": "string",
+      "allowedValues": [
+        "standard",
+        "professional",
+        "enterprise"
+      ]
+    }
+  },
+  "variables": {
+    "accountName": "[format('oai-azurechat-{0}', parameters('customerSlug'))]",
+    "selectedModel": "[if(equals(parameters('aiModelTier'), 'standard'), createObject('name', 'gpt-4o-mini', 'version', '2024-07-18', 'capacity', 30), if(equals(parameters('aiModelTier'), 'professional'), createObject('name', 'gpt-4-1', 'version', '2025-04-14', 'capacity', 20), createObject('name', 'gpt-4o', 'version', '2024-11-20', 'capacity', 10)))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[variables('accountName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "OpenAI",
+      "sku": {
+        "name": "S0"
+      },
+      "properties": {
+        "publicNetworkAccess": "Disabled",
+        "customSubDomainName": "[variables('accountName')]"
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[format('{0}/{1}', variables('accountName'), variables('selectedModel').name)]",
+      "sku": {
+        "name": "DataZoneStandard",
+        "capacity": "[variables('selectedModel').capacity]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[variables('selectedModel').name]",
+          "version": "[variables('selectedModel').version]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "openAiId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
+    },
+    "openAiEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('accountName')), '2024-04-01-preview').endpoint]"
+    }
+  }
+}

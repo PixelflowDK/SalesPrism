@@ -1,0 +1,137 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "13201143119417378953"
+    }
+  },
+  "parameters": {
+    "customerSlug": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "object"
+    },
+    "appServicePlanSku": {
+      "type": "string"
+    },
+    "integrationSubnetId": {
+      "type": "string"
+    }
+  },
+  "variables": {
+    "planName": "[format('plan-azurechat-{0}', parameters('customerSlug'))]",
+    "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]",
+    "appInsightsName": "[format('appi-azurechat-{0}', parameters('customerSlug'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('planName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "linux",
+      "sku": {
+        "name": "[parameters('appServicePlanSku')]"
+      },
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('appInsightsName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "RetentionInDays": 90
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('appName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "httpsOnly": true,
+        "clientAffinityEnabled": false,
+        "siteConfig": {
+          "linuxFxVersion": "NODE|22-lts",
+          "vnetRouteAllEnabled": true,
+          "appSettings": [
+            {
+              "name": "AZURE_OPENAI_ENDPOINT",
+              "value": ""
+            },
+            {
+              "name": "AZURE_SEARCH_ENDPOINT",
+              "value": ""
+            },
+            {
+              "name": "AZURE_COSMOSDB_ENDPOINT",
+              "value": ""
+            },
+            {
+              "name": "AZURE_KEYVAULT_ENDPOINT",
+              "value": ""
+            },
+            {
+              "name": "AZURE_STORAGE_ACCOUNT_NAME",
+              "value": ""
+            },
+            {
+              "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
+              "value": ""
+            },
+            {
+              "name": "USE_MANAGED_IDENTITIES",
+              "value": "true"
+            },
+            {
+              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]"
+            },
+            {
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+            }
+          ]
+        },
+        "virtualNetworkSubnetId": "[parameters('integrationSubnetId')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "appServiceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+    },
+    "appServicePrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2023-01-01', 'full').identity.principalId]"
+    },
+    "appServiceHostname": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2023-01-01').defaultHostName]"
+    }
+  }
+}

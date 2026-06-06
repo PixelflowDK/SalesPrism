@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "9235013427310677901"
+    }
+  },
+  "parameters": {
+    "vnetId": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "object"
+    }
+  },
+  "variables": {
+    "zones": [
+      "privatelink.openai.azure.com",
+      "privatelink.search.windows.net",
+      "privatelink.documents.azure.com",
+      "privatelink.vaultcore.azure.net",
+      "privatelink.blob.core.windows.net"
+    ]
+  },
+  "resources": [
+    {
+      "copy": {
+        "name": "dnsZones",
+        "count": "[length(variables('zones'))]"
+      },
+      "type": "Microsoft.Network/privateDnsZones",
+      "apiVersion": "2020-06-01",
+      "name": "[variables('zones')[copyIndex()]]",
+      "location": "global",
+      "tags": "[parameters('tags')]"
+    },
+    {
+      "copy": {
+        "name": "vnetLinks",
+        "count": "[length(variables('zones'))]"
+      },
+      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+      "apiVersion": "2020-06-01",
+      "name": "[format('{0}/{1}', variables('zones')[copyIndex()], format('{0}-link', replace(variables('zones')[copyIndex()], '.', '-')))]",
+      "location": "global",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "virtualNetwork": {
+          "id": "[parameters('vnetId')]"
+        },
+        "registrationEnabled": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[copyIndex()])]"
+      ]
+    }
+  ],
+  "outputs": {
+    "openAiDnsZoneId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[0])]"
+    },
+    "aiSearchDnsZoneId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[1])]"
+    },
+    "cosmosDnsZoneId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[2])]"
+    },
+    "keyVaultDnsZoneId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[3])]"
+    },
+    "storageDnsZoneId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[4])]"
+    }
+  }
+}

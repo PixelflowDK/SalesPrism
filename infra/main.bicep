@@ -1,169 +1,213 @@
+// main.bicep — Sales Prism subscription-scoped orchestrator
+// Deploys a fully isolated per-customer Azure stack.
+// All data remains within EU Microsoft datacentres (DataZoneStandard, northeurope/westeurope only).
 targetScope = 'subscription'
 
-// Activates/Deactivates Authentication using keys. If true it will enforce RBAC using managed identities
-@allowed([true, false])
-@description('Enables/Disables Authentication using keys. If true it will enforce RBAC using managed identity and disable key auth on backend resouces')
-param disableLocalAuth bool
+@description('Customer identifier — lowercase, alphanumeric, max 20 chars')
+param customerSlug string
 
-@allowed([false, true])
-@description('Enables/Disables Private Endpoints for backend Azure resources. If true, it will create a virtual network and subnets to host the private endpoints.')
-param usePrivateEndpoints bool
+@description('Company display name')
+param companyName string
 
-@minLength(1)
-@maxLength(64)
-@description('Name of the the environment which is used to generate a short unique hash used in all resources.')
-param name string
+@allowed(['northeurope', 'westeurope'])
+param azureRegion string = 'northeurope'
 
-@minLength(1)
-@description('Primary location for all resources')
-param location string
+@allowed(['B3', 'P1v3'])
+param appServiceSku string = 'B3'
 
-// azure open ai -- regions currently support gpt-4o global-standard
-@description('Location for the OpenAI resource group')
-@allowed([
-  'australiaeast'
-  'brazilsouth'
-  'canadaeast'
-  'eastus'
-  'eastus2'
-  'francecentral'
-  'germanywestcentral'
-  'japaneast'
-  'koreacentral'
-  'northcentralus'
-  'norwayeast'
-  'polandcentral'
-  'spaincentral'
-  'southafricanorth'
-  'southcentralus'
-  'southindia'
-  'swedencentral'
-  'switzerlandnorth'
-  'uksouth'
-  'westeurope'
-  'westus'
-  'westus3'
-])
-@metadata({
-  azd: {
-    type: 'location'
-  }
-})
-param openAILocation string
+@allowed(['standard', 'professional', 'enterprise'])
+param aiModelTier string = 'standard'
 
-// DALL-E v3 only supported in limited regions for now
-@description('Location for the OpenAI DALL-E 3 instance resource group')
-@allowed(['swedencentral', 'eastus', 'australiaeast'])
-@metadata({
-  azd: {
-    type: 'location'
-  }
-})
-param dalleLocation string
+@allowed(['basic', 'standard'])
+param aiSearchSku string = 'basic'
 
-param openAISku string = 'S0'
-param openAIApiVersion string = '2024-08-01-preview'
+param enableZeroDataRetention bool = false
 
-param chatGptDeploymentCapacity int = 30
-param chatGptDeploymentName string = 'gpt-4o'
-param chatGptModelName string = 'gpt-4o'
-param chatGptModelVersion string = '2024-05-13'
-param embeddingDeploymentName string = 'embedding'
-param embeddingDeploymentCapacity int = 120
-param embeddingModelName string = 'text-embedding-ada-002'
-
-param dalleDeploymentCapacity int = 1
-param dalleDeploymentName string = 'dall-e-3'
-param dalleModelName string = 'dall-e-3'
-param dalleApiVersion string = '2023-12-01-preview'
-
-param formRecognizerSkuName string = 'S0'
-param searchServiceIndexName string = 'azure-chat'
-param searchServiceSkuName string = 'standard'
-
-// TODO: define good default Sku and settings for storage account
-param storageServiceSku object = { name: 'Standard_LRS' }
-param storageServiceImageContainerName string = 'images'
-
-param resourceGroupName string = ''
-
-param privateEndpointVNetPrefix string = '192.168.0.0/16'
-param privateEndpointSubnetAddressPrefix string = '192.168.0.0/24'
-param appServiceBackendSubnetAddressPrefix string = '192.168.1.0/24'
-
-var resourceToken = toLower(uniqueString(subscription().id, name, location))
-var tags = { 'azd-env-name': name }
-
-// Organize resources in a resource group
-resource rg 'Microsoft.Resources/resourceGroups@2021-04-01' = {
-  name: !empty(resourceGroupName) ? resourceGroupName : 'rg-${name}'
-  location: location
-  tags: tags
+// ---------------------------------------------------------------------------
+// Naming — follow SAD Section 25 conventions exactly.
+// ---------------------------------------------------------------------------
+var names = {
+  resourceGroup:        'rg-azurechat-${customerSlug}'
+  appServicePlan:       'plan-azurechat-${customerSlug}'
+  appService:           'app-azurechat-${customerSlug}'
+  openAi:               'oai-azurechat-${customerSlug}'
+  aiSearch:             'srch-azurechat-${customerSlug}'
+  cosmosDb:             'cosmos-azurechat-${customerSlug}'
+  keyVault:             'kv-azurechat-${customerSlug}'
+  storage:              'st${customerSlug}'  // uniqueString suffix appended inside storage module
+  documentIntelligence: 'docintel-azurechat-${customerSlug}'
+  vnet:                 'vnet-azurechat-${customerSlug}'
+  appInsights:          'appi-azurechat-${customerSlug}'
 }
 
-module resources 'resources.bicep' = {
-  name: 'all-resources'
-  scope: rg
+// ---------------------------------------------------------------------------
+// Tags — applied to all resources.
+// ---------------------------------------------------------------------------
+var tags = {
+  customer:     customerSlug
+  environment:  'production'
+  'managed-by': 'sales-prism-provisioning'
+  'model-tier': aiModelTier
+}
+
+// ---------------------------------------------------------------------------
+// 1. Customer resource group (subscription scope)
+// ---------------------------------------------------------------------------
+module rgModule 'modules/customer-resource-group.bicep' = {
+  name: 'deploy-rg-${customerSlug}'
   params: {
-    name: name
-    resourceToken: resourceToken
-    tags: tags
-    openai_api_version: openAIApiVersion
-    openAiLocation: openAILocation
-    openAiSkuName: openAISku
-    chatGptDeploymentCapacity: chatGptDeploymentCapacity
-    chatGptDeploymentName: chatGptDeploymentName
-    chatGptModelName: chatGptModelName
-    chatGptModelVersion: chatGptModelVersion
-    embeddingDeploymentName: embeddingDeploymentName
-    embeddingDeploymentCapacity: embeddingDeploymentCapacity
-    embeddingModelName: embeddingModelName
-    dalleLocation: dalleLocation
-    dalleDeploymentCapacity: dalleDeploymentCapacity
-    dalleDeploymentName: dalleDeploymentName
-    dalleModelName: dalleModelName
-    dalleApiVersion: dalleApiVersion
-    formRecognizerSkuName: formRecognizerSkuName
-    searchServiceIndexName: searchServiceIndexName
-    searchServiceSkuName: searchServiceSkuName
-    storageServiceSku: storageServiceSku
-    storageServiceImageContainerName: storageServiceImageContainerName
-    location: location
-    disableLocalAuth: disableLocalAuth
-    usePrivateEndpoints: usePrivateEndpoints
-    privateEndpointVNetPrefix: privateEndpointVNetPrefix
-    privateEndpointSubnetAddressPrefix: privateEndpointSubnetAddressPrefix
-    appServiceBackendSubnetAddressPrefix: appServiceBackendSubnetAddressPrefix
+    name:     names.resourceGroup
+    location: azureRegion
+    tags:     tags
   }
 }
 
-output APP_URL string = resources.outputs.url
-output AZURE_WEBAPP_NAME string = resources.outputs.webapp_name
-output AZURE_LOCATION string = location
-output AZURE_TENANT_ID string = tenant().tenantId
-output AZURE_RESOURCE_GROUP string = rg.name
+// ---------------------------------------------------------------------------
+// 2. Core services — all deployed into the customer resource group.
+// ---------------------------------------------------------------------------
+module openAiModule 'modules/openai.bicep' = {
+  name: 'deploy-openai-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule]
+  params: {
+    customerSlug: customerSlug
+    location:     azureRegion
+    tags:         tags
+    aiModelTier:  aiModelTier
+  }
+}
 
-output AZURE_OPENAI_API_INSTANCE_NAME string = resources.outputs.openai_name
-output AZURE_OPENAI_API_DEPLOYMENT_NAME string = chatGptDeploymentName
-output AZURE_OPENAI_API_VERSION string = openAIApiVersion
-output AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_NAME string = embeddingDeploymentName
+module aiSearchModule 'modules/ai-search.bicep' = {
+  name: 'deploy-aisearch-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule]
+  params: {
+    customerSlug: customerSlug
+    location:     azureRegion
+    tags:         tags
+    aiSearchSku:  aiSearchSku
+  }
+}
 
-output AZURE_OPENAI_DALLE_API_INSTANCE_NAME string = resources.outputs.openai_dalle_name
-output AZURE_OPENAI_DALLE_API_DEPLOYMENT_NAME string = dalleDeploymentName
-output AZURE_OPENAI_DALLE_API_VERSION string = dalleApiVersion
+module cosmosModule 'modules/cosmos-db.bicep' = {
+  name: 'deploy-cosmos-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule]
+  params: {
+    customerSlug: customerSlug
+    location:     azureRegion
+    tags:         tags
+  }
+}
 
-output AZURE_COSMOSDB_ACCOUNT_NAME string = resources.outputs.cosmos_name
-output AZURE_COSMOSDB_URI string = resources.outputs.cosmos_endpoint
-output AZURE_COSMOSDB_DB_NAME string = resources.outputs.database_name
-output AZURE_COSMOSDB_CONTAINER_NAME string = resources.outputs.history_container_name
-output AZURE_COSMOSDB_CONFIG_CONTAINER_NAME string = resources.outputs.config_container_name
+module keyVaultModule 'modules/key-vault.bicep' = {
+  name: 'deploy-keyvault-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule]
+  params: {
+    customerSlug: customerSlug
+    location:     azureRegion
+    tags:         tags
+  }
+}
 
-output AZURE_SEARCH_NAME string = resources.outputs.search_name
-output AZURE_SEARCH_INDEX_NAME string = searchServiceIndexName
+module storageModule 'modules/storage.bicep' = {
+  name: 'deploy-storage-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule]
+  params: {
+    customerSlug: customerSlug
+    location:     azureRegion
+    tags:         tags
+  }
+}
 
-output AZURE_DOCUMENT_INTELLIGENCE_NAME string = resources.outputs.form_recognizer_name
-output AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT string = 'https://${resources.outputs.form_recognizer_name}.cognitiveservices.azure.com/'
+module docIntelligenceModule 'modules/document-intelligence.bicep' = {
+  name: 'deploy-docintel-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule]
+  params: {
+    customerSlug: customerSlug
+    location:     azureRegion
+    tags:         tags
+  }
+}
 
-output AZURE_SPEECH_REGION string = location
-output AZURE_STORAGE_ACCOUNT_NAME string = resources.outputs.storage_name
-output AZURE_KEY_VAULT_NAME string = resources.outputs.key_vault_name
+// ---------------------------------------------------------------------------
+// 3. Networking — VNet, subnets, private endpoints (depends on all services)
+// ---------------------------------------------------------------------------
+module networkingModule 'modules/networking.bicep' = {
+  name: 'deploy-networking-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule]
+  params: {
+    customerSlug: customerSlug
+    location:     azureRegion
+    tags:         tags
+    openAiId:     openAiModule.outputs.openAiId
+    aiSearchId:   aiSearchModule.outputs.aiSearchId
+    cosmosId:     cosmosModule.outputs.cosmosId
+    keyVaultId:   keyVaultModule.outputs.keyVaultId
+    storageId:    storageModule.outputs.storageId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. Private DNS zones (depends on VNet)
+// ---------------------------------------------------------------------------
+module privateDnsModule 'modules/private-dns-zones.bicep' = {
+  name: 'deploy-privatedns-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [networkingModule]
+  params: {
+    vnetId: networkingModule.outputs.vnetId
+    tags:   tags
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 5. App Service (depends on networking for integration subnet)
+// ---------------------------------------------------------------------------
+module appServiceModule 'modules/app-service.bicep' = {
+  name: 'deploy-appservice-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [networkingModule]
+  params: {
+    customerSlug:        customerSlug
+    location:            azureRegion
+    tags:                tags
+    appServicePlanSku:   appServiceSku
+    integrationSubnetId: networkingModule.outputs.integrationSubnetId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. RBAC — managed identity role assignments (depends on App Service + all services)
+// ---------------------------------------------------------------------------
+module rbacModule 'modules/rbac.bicep' = {
+  name: 'deploy-rbac-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [appServiceModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule, docIntelligenceModule]
+  params: {
+    appServicePrincipalId:   appServiceModule.outputs.appServicePrincipalId
+    openAiId:                openAiModule.outputs.openAiId
+    aiSearchId:              aiSearchModule.outputs.aiSearchId
+    cosmosId:                cosmosModule.outputs.cosmosId
+    keyVaultId:              keyVaultModule.outputs.keyVaultId
+    storageId:               storageModule.outputs.storageId
+    documentIntelligenceId:  docIntelligenceModule.outputs.documentIntelligenceId
+    customerSlug:            customerSlug
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Outputs
+// ---------------------------------------------------------------------------
+output resourceGroupName      string = names.resourceGroup
+output appServiceHostname     string = appServiceModule.outputs.appServiceHostname
+output openAiEndpoint         string = openAiModule.outputs.openAiEndpoint
+output aiSearchEndpoint       string = aiSearchModule.outputs.aiSearchEndpoint
+output cosmosEndpoint         string = cosmosModule.outputs.cosmosEndpoint
+output keyVaultUri            string = keyVaultModule.outputs.keyVaultUri
+output storageName            string = storageModule.outputs.storageName
+output documentIntelligenceEndpoint string = docIntelligenceModule.outputs.documentIntelligenceEndpoint
