@@ -112,9 +112,12 @@ If graph is missing, fall back to codebase-search.
 
 - `azure-prepare`, `azure-deploy`, `azure-validate`, `azure-compliance`
 - `azure-ai`, `azure-quotas`, `entra-app-registration`
-- `graphify` — knowledge graph (use main agent to build, subagents to query)
-- `grill-me` — pre-implementation requirements review
-- `grill-me-codex` — Codex adversarial review of Claude Code output
+- `graphify` — knowledge graph (main agent builds, subagents query)
+  - Install: `pip install graphifyy && graphify install` + `npx skills add https://github.com/akillness/oh-my-skills --skill graphify`
+- `grill-me` — pre-implementation requirements review (Matt Pocock)
+  - Install: `npx skills add https://github.com/mattpocock/skills --skill grill-me`
+- `grill-me-codex` — Codex adversarial cross-model review of Claude Code output (Chase AI)
+  - Install: `npx skills add https://github.com/chaseai-yt/grill-me-codex`
 - `gdpr-data-handling`, `webapp-testing`, `git-workflow`, `skill-creator`
 
 ## Off-Limits (requires explicit approval from Kristjan before touching)
