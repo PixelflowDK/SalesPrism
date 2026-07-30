@@ -54,3 +54,17 @@ export const resolveTenantSlug = (hostHeader: string | null | undefined): string
 };
 
 export { TENANT_SUBDOMAIN_PATTERN };
+
+/**
+ * Request-scoped convenience wrapper around `resolveTenantSlug` for server
+ * components / server actions / route handlers that don't already have a
+ * `Headers` object in hand. Kept separate from the pure functions above
+ * (which stay synchronous and Azure/Next-free for unit testing) — this one
+ * reads Next's `headers()` dynamic API, so it can only run in a request
+ * context.
+ */
+export const getCurrentTenantSlug = async (): Promise<string> => {
+  const { headers } = await import("next/headers");
+  const requestHeaders = await headers();
+  return resolveTenantSlug(requestHeaders.get("host"));
+};

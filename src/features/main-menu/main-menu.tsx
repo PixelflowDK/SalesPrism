@@ -12,6 +12,7 @@ import {
   Home,
   MessageCircle,
   PocketKnife,
+  Settings,
   Sheet,
   VenetianMask,
 } from "lucide-react";
@@ -85,6 +86,14 @@ export const MainMenu = async () => {
               <MenuLink href="/reporting" ariaLabel="Go to the Admin reporting">
                 <Sheet {...menuIconProps} />
                 <span className="text-sm">Reporting</span>
+              </MenuLink>
+            </MenuItem>
+          )}
+          {user.isAdmin && (
+            <MenuItem tooltip="Admin" asChild>
+              <MenuLink href="/admin/users" ariaLabel="Go to the Admin portal">
+                <Settings {...menuIconProps} />
+                <span className="text-sm">Admin</span>
               </MenuLink>
             </MenuItem>
           )}

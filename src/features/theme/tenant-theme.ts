@@ -4,6 +4,7 @@ import {
   ServerActionResponse,
   zodErrorsToServerActionErrors,
 } from "@/features/common/server-action-response";
+import { safeLog } from "@/features/common/services/safe-logger";
 import { SqlQuerySpec } from "@azure/cosmos";
 import { z } from "zod";
 import { ConfigContainer } from "../common/services/cosmos";
@@ -50,6 +51,19 @@ export const TenantThemeDarkModeSchema = z.object({
 });
 export type TenantThemeDarkMode = z.infer<typeof TenantThemeDarkModeSchema>;
 
+/**
+ * Toggle-based platform features — SAD §8.6. `userAnalytics` gates the
+ * `/admin/analytics` route. `.default(...)` so existing Cosmos documents
+ * seeded before this field existed still parse successfully (Zod fills the
+ * default rather than failing validation on a missing key).
+ */
+export const TenantFeaturesSchema = z
+  .object({
+    userAnalytics: z.boolean().default(false),
+  })
+  .default({ userAnalytics: false });
+export type TenantFeatures = z.infer<typeof TenantFeaturesSchema>;
+
 export type TenantTheme = z.infer<typeof TenantThemeModelSchema>;
 
 export const TenantThemeModelSchema = z.object({
@@ -65,6 +79,7 @@ export const TenantThemeModelSchema = z.object({
   authMethod: AuthMethodSchema,
   theme: TenantThemeColorsSchema.nullable(),
   darkMode: TenantThemeDarkModeSchema.nullable(),
+  features: TenantFeaturesSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -74,17 +89,21 @@ const tenantThemeDocId = (tenantSlug: string) => `tenant-theme-${tenantSlug}`;
 const buildDefaultTenantTheme = (tenantSlug: string): TenantTheme => {
   const now = new Date().toISOString();
   const tier = PlatformTierSchema.safeParse(process.env.PLATFORM_TIER);
+  const resolvedTier = tier.success ? tier.data : "smb";
 
   return {
     id: tenantThemeDocId(tenantSlug),
     type: TENANT_THEME_ATTRIBUTE,
     userId: tenantSlug,
     tenantSlug,
-    tier: tier.success ? tier.data : "smb",
+    tier: resolvedTier,
     whiteLabel: false,
     authMethod: "username-password",
     theme: null,
     darkMode: null,
+    // SAD §8.6 — default true for Enterprise, false for SMB/Professional.
+    // Can be toggled per tenant in Cosmos without a re-deployment.
+    features: { userAnalytics: resolvedTier === "enterprise" },
     createdAt: now,
     updatedAt: now,
   };
@@ -127,9 +146,13 @@ export const GetTenantTheme = async (
 
     return { status: "OK", response: parsed.data };
   } catch (error) {
+    // Codex review #1 finding 7 — never interpolate the raw Cosmos error
+    // (can carry connection strings / diagnostic payloads) into a message
+    // that flows back through ServerActionResponse to a UI surface or log.
+    safeLog.error("theme.get-failed", { tenantSlug });
     return {
       status: "ERROR",
-      errors: [{ message: `Error retrieving TenantTheme: ${error}` }],
+      errors: [{ message: "Unable to load tenant theme." }],
     };
   }
 };
@@ -165,9 +188,10 @@ export const EnsureTenantTheme = async (
       return { status: "OK", response: resource };
     }
 
+    safeLog.error("theme.seed-failed", { tenantSlug });
     return {
       status: "ERROR",
-      errors: [{ message: `Failed to seed TenantTheme for slug: ${tenantSlug}` }],
+      errors: [{ message: "Unable to initialize tenant theme." }],
     };
   } catch (error) {
     // Cosmos raises a 409 Conflict if a concurrent request already
@@ -178,9 +202,10 @@ export const EnsureTenantTheme = async (
       return await GetTenantTheme(tenantSlug);
     }
 
+    safeLog.error("theme.seed-failed", { tenantSlug, statusCode: status });
     return {
       status: "ERROR",
-      errors: [{ message: `Error seeding TenantTheme: ${error}` }],
+      errors: [{ message: "Unable to initialize tenant theme." }],
     };
   }
 };

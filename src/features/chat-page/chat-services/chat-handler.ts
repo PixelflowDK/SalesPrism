@@ -1,8 +1,11 @@
 "use server";
 import "server-only";
 
+import { RecordPromptEvent } from "@/features/admin/activity-service";
 import { getCurrentUser, userHashedId } from "@/features/auth-page/helpers";
 import { getChatModel } from "@/features/common/services/azure-ai";
+import { newRequestId, safeLog } from "@/features/common/services/safe-logger";
+import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 import { CHAT_DEFAULT_SYSTEM_PROMPT, AI_NAME } from "@/features/theme/theme-config";
 import { stepCountIs, streamText, type ModelMessage } from "ai";
 import { buildSystemPrompt, mapChatMessagesToModelMessages } from "./chat-message-mapper";
@@ -42,6 +45,7 @@ export const ChatAPIEntry = async (
   props: UserPrompt,
   signal: AbortSignal
 ): Promise<Response> => {
+  const requestId = newRequestId();
   const currentChatThreadResponse = await EnsureChatThreadOperation(props.id);
 
   if (currentChatThreadResponse.status !== "OK") {
@@ -50,11 +54,12 @@ export const ChatAPIEntry = async (
 
   const currentChatThread = currentChatThreadResponse.response;
 
-  const [user, userId, history, docs] = await Promise.all([
+  const [user, userId, tenantSlug, history, docs] = await Promise.all([
     getCurrentUser(),
     userHashedId(),
-    _getHistory(currentChatThread),
-    _getDocuments(currentChatThread),
+    getCurrentTenantSlug(),
+    _getHistory(currentChatThread, requestId),
+    _getDocuments(currentChatThread, requestId),
   ]);
 
   const ragToolAvailable = docs.length > 0;
@@ -100,13 +105,31 @@ export const ChatAPIEntry = async (
         role: "assistant",
         chatThreadId: currentChatThread.id,
       });
+
+      // SAD §8.6 activity tracking — best-effort, never blocks the response.
+      // Only counts/lengths/tokens are recorded, never prompt/response text.
+      await RecordPromptEvent({
+        tenantSlug,
+        actorHashedId: userId,
+        sessionId: currentChatThread.id,
+        promptLength: props.message.length,
+        tokensUsed: event.totalUsage.totalTokens,
+        modelTier: process.env.PLATFORM_TIER || "smb",
+      });
     },
   });
 
   return result.toUIMessageStreamResponse({
     onError: (error) => {
-      console.error("🔴 chat-handler streamText error:", error);
-      return "There was an error generating a response. Please try again.";
+      // Codex review #1 finding 7 (MEDIUM) — never log the raw streamText
+      // error object (routinely carries prompt text / retrieved content).
+      // `requestId` is the only correlation surfaced to both the log line
+      // and the user-facing message.
+      safeLog.error("chat.stream-error", {
+        requestId,
+        chatThreadId: currentChatThread.id,
+      });
+      return `There was an error generating a response. Please try again. (ref: ${requestId})`;
     },
   });
 };
@@ -125,24 +148,30 @@ const _buildUserMessage = (props: UserPrompt): ModelMessage => {
   return { role: "user", content: props.message };
 };
 
-const _getHistory = async (chatThread: ChatThreadModel) => {
+const _getHistory = async (chatThread: ChatThreadModel, requestId: string) => {
   const historyResponse = await FindTopChatMessagesForCurrentUser(chatThread.id);
 
   if (historyResponse.status === "OK") {
     return historyResponse.response.reverse();
   }
 
-  console.error("🔴 Error on getting history:", historyResponse.errors);
+  safeLog.error("chat.history-lookup-failed", {
+    requestId,
+    chatThreadId: chatThread.id,
+  });
   return [];
 };
 
-const _getDocuments = async (chatThread: ChatThreadModel) => {
+const _getDocuments = async (chatThread: ChatThreadModel, requestId: string) => {
   const docsResponse = await FindAllChatDocuments(chatThread.id);
 
   if (docsResponse.status === "OK") {
     return docsResponse.response;
   }
 
-  console.error("🔴 Error on AI search:", docsResponse.errors);
+  safeLog.error("chat.document-lookup-failed", {
+    requestId,
+    chatThreadId: chatThread.id,
+  });
   return [];
 };

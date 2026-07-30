@@ -1,6 +1,7 @@
 "use server";
 import "server-only";
 
+import { RecordUploadEvent } from "@/features/admin/activity-service";
 import { userHashedId } from "@/features/auth-page/helpers";
 import { HistoryContainer } from "@/features/common/services/cosmos";
 
@@ -8,6 +9,7 @@ import { RevalidateCache } from "@/features/common/navigation-helpers";
 import { ServerActionResponse } from "@/features/common/server-action-response";
 import { DocumentIntelligenceInstance } from "@/features/common/services/document-intelligence";
 import { uniqueId } from "@/features/common/util";
+import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 import { SqlQuerySpec } from "@azure/cosmos";
 import { EnsureIndexIsCreated } from "./azure-ai-search/azure-ai-search";
 import { CHAT_DOCUMENT_ATTRIBUTE, ChatDocumentModel } from "./models";
@@ -202,6 +204,11 @@ export const CreateChatDocument = async (
 
     if (resource) {
       if (debug) console.log("CreateChatDocument: Document created successfully.");
+
+      // SAD §8.6 activity tracking — best-effort, count-only (no filename).
+      const tenantSlug = await getCurrentTenantSlug();
+      await RecordUploadEvent({ tenantSlug, actorHashedId: modelToSave.userId });
+
       return {
         status: "OK",
         response: resource,
