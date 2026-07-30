@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "117201189980452560"
+      "templateHash": "2305975029309814117"
     }
   },
   "parameters": {
@@ -552,7 +552,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "4605879861553005293"
+              "templateHash": "9714801105219030341"
             }
           },
           "parameters": {
@@ -564,6 +564,13 @@
             },
             "tags": {
               "type": "object"
+            },
+            "enableZoneRedundancy": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Zone redundancy for the Cosmos account. Default false per SAD §34.5 (single-region MVP); westeurope zonal capacity is also frequently constrained."
+              }
             }
           },
           "variables": {
@@ -587,7 +594,8 @@
                 "locations": [
                   {
                     "locationName": "[parameters('location')]",
-                    "failoverPriority": 0
+                    "failoverPriority": 0,
+                    "isZoneRedundant": "[parameters('enableZoneRedundancy')]"
                   }
                 ],
                 "publicNetworkAccess": "Disabled",

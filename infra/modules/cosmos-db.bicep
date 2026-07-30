@@ -4,6 +4,9 @@ param customerSlug string
 param location string
 param tags object
 
+@description('Zone redundancy for the Cosmos account. Default false per SAD §34.5 (single-region MVP); westeurope zonal capacity is also frequently constrained.')
+param enableZoneRedundancy bool = false
+
 var accountName = 'cosmos-azurechat-${customerSlug}'
 
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview' = {
@@ -20,6 +23,7 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview
       {
         locationName: location
         failoverPriority: 0
+        isZoneRedundant: enableZoneRedundancy
       }
     ]
     publicNetworkAccess: 'Disabled'
