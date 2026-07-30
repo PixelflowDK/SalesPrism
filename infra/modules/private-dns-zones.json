@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "9235013427310677901"
+      "templateHash": "18271554017274510343"
     }
   },
   "parameters": {
@@ -22,7 +22,8 @@
       "privatelink.search.windows.net",
       "privatelink.documents.azure.com",
       "privatelink.vaultcore.azure.net",
-      "privatelink.blob.core.windows.net"
+      "privatelink.blob.core.windows.net",
+      "privatelink.cognitiveservices.azure.com"
     ]
   },
   "resources": [
@@ -78,6 +79,10 @@
     "storageDnsZoneId": {
       "type": "string",
       "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[4])]"
+    },
+    "cognitiveServicesDnsZoneId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[5])]"
     }
   }
 }

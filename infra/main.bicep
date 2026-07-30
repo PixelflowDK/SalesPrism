@@ -12,6 +12,23 @@ param companyName string
 @allowed(['northeurope', 'westeurope'])
 param azureRegion string = 'northeurope'
 
+@description('Region for the Cosmos DB account only. Defaults to azureRegion; override when the primary region has Cosmos capacity constraints (both values remain EU per R1).')
+@allowed(['northeurope', 'westeurope'])
+param cosmosRegion string = azureRegion
+
+// ---------------------------------------------------------------------------
+// F1 (codex-review-1, finding 1) — AI region pinning.
+// Hard-pinned to westeurope per ADR-001 (2026-07-30): it is the only
+// SAD-approved region with DataZoneStandard coverage for the full ADR-001
+// model set (gpt-5.4-mini/gpt-5.4/gpt-5.5 + text-embedding-3-small/-large).
+// Widen this @allowed list ONLY via a new ADR once DataZoneStandard quota is
+// confirmed in another approved region. All non-AI resources continue to use
+// azureRegion (Cosmos keeps its own cosmosRegion override, unchanged).
+// ---------------------------------------------------------------------------
+@allowed(['westeurope'])
+@description('Azure OpenAI deployment region — hard-pinned per ADR-001 until DataZoneStandard quota exists elsewhere. Never wire azureRegion into openAiModule.')
+param aiRegion string = 'westeurope'
+
 @allowed(['B1', 'B3', 'P1v3'])
 @description('App Service Plan SKU. B1 is validation-environment only — never use for a production customer.')
 param appServiceSku string = 'B3'
@@ -55,6 +72,15 @@ param embeddingModelVersion string = '1'
 
 @description('Embedding model deployment capacity (1K TPM units).')
 param embeddingModelCapacity int = 30
+
+@description('Embedding vector width — must match embeddingModelName AND the AI Search index vectorSearchDimensions (ADR-001: locked at provisioning; 1536 for text-embedding-3-small, 3072 for text-embedding-3-large). Keep in sync with embeddingModelName when overriding either.')
+param embeddingModelDimensions int = 1536
+
+@description('Azure OpenAI REST API version consumed by src/features/common/services/azure-ai.ts (AZURE_OPENAI_API_VERSION).')
+param openAiApiVersion string = '2025-01-01-preview'
+
+@description('Azure AI Search index name for this customer (AZURE_SEARCH_INDEX_NAME).')
+param searchIndexName string = 'idx-${customerSlug}'
 
 @minValue(30)
 @maxValue(730)
@@ -109,7 +135,7 @@ module openAiModule 'modules/openai.bicep' = {
   dependsOn: [rgModule]
   params: {
     customerSlug:               customerSlug
-    location:                   azureRegion
+    location:                   aiRegion // F1: AI resources hard-pinned to westeurope per ADR-001 — never azureRegion
     tags:                       tags
     aiModelTier:                aiModelTier
     aiModelSkuName:             aiModelSkuName
@@ -140,7 +166,7 @@ module cosmosModule 'modules/cosmos-db.bicep' = {
   dependsOn: [rgModule]
   params: {
     customerSlug: customerSlug
-    location:     azureRegion
+    location:     cosmosRegion
     tags:         tags
   }
 }
@@ -179,26 +205,25 @@ module docIntelligenceModule 'modules/document-intelligence.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Networking — VNet, subnets, private endpoints (depends on all services)
+// 3. Networking — VNet + subnets only.
+// F2/F3 restructuring (codex-review-1): Private Endpoint creation moved to
+// modules/private-endpoints.bicep (step 5 below), which runs after the DNS
+// zones module so it can bind each PE's privateDnsZoneGroups.
 // ---------------------------------------------------------------------------
 module networkingModule 'modules/networking.bicep' = {
   name: 'deploy-networking-${customerSlug}'
   scope: resourceGroup(names.resourceGroup)
-  dependsOn: [rgModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule]
+  dependsOn: [rgModule]
   params: {
     customerSlug: customerSlug
     location:     azureRegion
     tags:         tags
-    openAiId:     openAiModule.outputs.openAiId
-    aiSearchId:   aiSearchModule.outputs.aiSearchId
-    cosmosId:     cosmosModule.outputs.cosmosId
-    keyVaultId:   keyVaultModule.outputs.keyVaultId
-    storageId:    storageModule.outputs.storageId
   }
 }
 
 // ---------------------------------------------------------------------------
-// 4. Private DNS zones (depends on VNet)
+// 4. Private DNS zones (depends on VNet for virtualNetworkLinks).
+// Outputs zone resource IDs consumed by private-endpoints.bicep below (F2/F3).
 // ---------------------------------------------------------------------------
 module privateDnsModule 'modules/private-dns-zones.bicep' = {
   name: 'deploy-privatedns-${customerSlug}'
@@ -211,7 +236,37 @@ module privateDnsModule 'modules/private-dns-zones.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Observability — Log Analytics + Application Insights (SAD §31.6, per-customer isolation)
+// 5. Private Endpoints + privateDnsZoneGroups (F2/F3, codex-review-1 findings 2 & 3).
+// Consumes the privatelink subnet from networking + zone IDs from privateDnsModule
+// + service resource IDs from the resource modules above — all within the
+// customer resource group scope.
+// ---------------------------------------------------------------------------
+module privateEndpointsModule 'modules/private-endpoints.bicep' = {
+  name: 'deploy-pe-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [networkingModule, privateDnsModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule, docIntelligenceModule]
+  params: {
+    customerSlug:         customerSlug
+    location:             azureRegion
+    tags:                 tags
+    privateLinkSubnetId:  networkingModule.outputs.privateLinkSubnetId
+    openAiId:             openAiModule.outputs.openAiId
+    aiSearchId:           aiSearchModule.outputs.aiSearchId
+    cosmosId:             cosmosModule.outputs.cosmosId
+    keyVaultId:           keyVaultModule.outputs.keyVaultId
+    storageId:            storageModule.outputs.storageId
+    documentIntelligenceId: docIntelligenceModule.outputs.documentIntelligenceId
+    openAiDnsZoneId:            privateDnsModule.outputs.openAiDnsZoneId
+    aiSearchDnsZoneId:          privateDnsModule.outputs.aiSearchDnsZoneId
+    cosmosDnsZoneId:            privateDnsModule.outputs.cosmosDnsZoneId
+    keyVaultDnsZoneId:          privateDnsModule.outputs.keyVaultDnsZoneId
+    storageDnsZoneId:           privateDnsModule.outputs.storageDnsZoneId
+    cognitiveServicesDnsZoneId: privateDnsModule.outputs.cognitiveServicesDnsZoneId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Observability — Log Analytics + Application Insights (SAD §31.6, per-customer isolation)
 // ---------------------------------------------------------------------------
 module observabilityModule 'modules/observability.bicep' = {
   name: 'deploy-observability-${customerSlug}'
@@ -226,12 +281,15 @@ module observabilityModule 'modules/observability.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// 6. App Service (depends on networking for integration subnet, observability for telemetry)
+// 7. App Service (depends on networking for integration subnet, private endpoints
+// for DNS resolution, observability for telemetry). F4 (codex-review-1 finding 4):
+// real app settings wired from module outputs — see env-var contract comment
+// in modules/app-service.bicep.
 // ---------------------------------------------------------------------------
 module appServiceModule 'modules/app-service.bicep' = {
   name: 'deploy-appservice-${customerSlug}'
   scope: resourceGroup(names.resourceGroup)
-  dependsOn: [networkingModule, observabilityModule]
+  dependsOn: [networkingModule, privateEndpointsModule, observabilityModule]
   params: {
     customerSlug:                  customerSlug
     location:                      azureRegion
@@ -240,11 +298,23 @@ module appServiceModule 'modules/app-service.bicep' = {
     integrationSubnetId:           networkingModule.outputs.integrationSubnetId
     appInsightsInstrumentationKey: observabilityModule.outputs.appInsightsInstrumentationKey
     appInsightsConnectionString:   observabilityModule.outputs.appInsightsConnectionString
+    openAiInstanceName:            openAiModule.outputs.openAiName
+    openAiApiVersion:              openAiApiVersion
+    chatDeploymentName:            openAiModule.outputs.chatModelDeploymentName
+    embeddingDeploymentName:       openAiModule.outputs.embeddingModelDeploymentName
+    embeddingDimensions:           embeddingModelDimensions
+    searchName:                    aiSearchModule.outputs.aiSearchName
+    searchIndexName:               searchIndexName
+    cosmosDbUri:                   cosmosModule.outputs.cosmosEndpoint
+    keyVaultName:                  keyVaultModule.outputs.keyVaultName
+    storageAccountName:            storageModule.outputs.storageName
+    documentIntelligenceEndpoint:  docIntelligenceModule.outputs.documentIntelligenceEndpoint
+    tenantSlug:                    customerSlug
   }
 }
 
 // ---------------------------------------------------------------------------
-// 7. RBAC — managed identity role assignments (depends on App Service + all services)
+// 8. RBAC — managed identity role assignments (depends on App Service + all services)
 // ---------------------------------------------------------------------------
 module rbacModule 'modules/rbac.bicep' = {
   name: 'deploy-rbac-${customerSlug}'

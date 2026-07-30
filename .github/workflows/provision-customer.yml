@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       azure_region:
-        description: "Azure region — GDPR-approved only"
+        description: "Azure region for non-AI resources (app, networking, observability) — GDPR-approved only. AI resources (Azure OpenAI) always deploy to westeurope regardless of this choice, per ADR-001/infra/main.bicep aiRegion (hard-pinned, DataZoneStandard quota)."
         type: choice
         options:
           - westeurope
@@ -66,10 +66,13 @@ on:
         type: string
         default: "sales-coach"
 
-# Only what each job actually needs — OIDC token issuance + repo checkout.
-permissions:
-  id-token: write
-  contents: read
+# F6 (codex-review-1 finding 6): no workflow-level id-token permission. Every
+# job declares its own minimal `permissions:` block below — only
+# deploy-infrastructure and configure-application perform Azure OIDC login
+# and get id-token: write; all other jobs (validate, configure-dns, summary)
+# get contents: read only, so a compromised/extended step in a non-Azure job
+# (e.g. configure-dns, which only calls the Cloudflare API) can never mint an
+# Azure OIDC token.
 
 # One provisioning run per customer at a time — never race two runs against the same slug.
 concurrency:
@@ -87,6 +90,8 @@ jobs:
   validate:
     name: Validate inputs
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Validate customer_slug format
         run: |
@@ -148,6 +153,9 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       resource_group: ${{ steps.names.outputs.resource_group }}
       app_service_name: ${{ steps.names.outputs.app_service_name }}
@@ -245,6 +253,10 @@ jobs:
     needs: deploy-infrastructure
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    # This job only calls the Cloudflare API (CLOUDFLARE_DNS_TOKEN repo secret) —
+    # it never logs into Azure and must never be able to mint an OIDC token.
+    permissions:
+      contents: read
     outputs:
       record_base: ${{ steps.guard.outputs.record_base }}
       fqdn: ${{ steps.guard.outputs.fqdn }}
@@ -349,6 +361,9 @@ jobs:
     needs: [deploy-infrastructure, configure-dns]
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
     outputs:
       tls_status: ${{ steps.tls.outputs.tls_status }}
       app_url: https://${{ needs.configure-dns.outputs.fqdn }}
@@ -539,6 +554,8 @@ jobs:
     needs: [deploy-infrastructure, configure-dns, configure-application]
     runs-on: ubuntu-latest
     if: always()
+    permissions:
+      contents: read
     steps:
       - name: Write summary
         env:
@@ -558,6 +575,8 @@ jobs:
             echo "| TLS status | ${TLS_STATUS:-unknown} (installed = Full Strict origin cert bound; pending = served via Cloudflare proxy, Full mode, no origin cert yet) |"
             echo "| Environment | ${{ inputs.environment }} |"
             echo "| AI model tier | ${{ inputs.ai_model_tier }} |"
+            echo ""
+            echo "**Note:** AI resources (Azure OpenAI) always deploy to **westeurope** regardless of the azure_region input (${{ inputs.azure_region }}) — hard-pinned in infra/main.bicep's \`aiRegion\` param per ADR-001 (DataZoneStandard quota). Only non-AI resources use azure_region."
             echo ""
             echo "### Next steps"
             echo "- DNS may take a few minutes to propagate before the custom hostname resolves everywhere."

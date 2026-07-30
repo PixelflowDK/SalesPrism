@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "2305975029309814117"
+      "templateHash": "14265617445088767134"
     }
   },
   "parameters": {
@@ -28,6 +28,27 @@
         "northeurope",
         "westeurope"
       ]
+    },
+    "cosmosRegion": {
+      "type": "string",
+      "defaultValue": "[parameters('azureRegion')]",
+      "allowedValues": [
+        "northeurope",
+        "westeurope"
+      ],
+      "metadata": {
+        "description": "Region for the Cosmos DB account only. Defaults to azureRegion; override when the primary region has Cosmos capacity constraints (both values remain EU per R1)."
+      }
+    },
+    "aiRegion": {
+      "type": "string",
+      "defaultValue": "westeurope",
+      "allowedValues": [
+        "westeurope"
+      ],
+      "metadata": {
+        "description": "Azure OpenAI deployment region — hard-pinned per ADR-001 until DataZoneStandard quota exists elsewhere. Never wire azureRegion into openAiModule."
+      }
     },
     "appServiceSku": {
       "type": "string",
@@ -123,6 +144,27 @@
       "defaultValue": 30,
       "metadata": {
         "description": "Embedding model deployment capacity (1K TPM units)."
+      }
+    },
+    "embeddingModelDimensions": {
+      "type": "int",
+      "defaultValue": 1536,
+      "metadata": {
+        "description": "Embedding vector width — must match embeddingModelName AND the AI Search index vectorSearchDimensions (ADR-001: locked at provisioning; 1536 for text-embedding-3-small, 3072 for text-embedding-3-large). Keep in sync with embeddingModelName when overriding either."
+      }
+    },
+    "openAiApiVersion": {
+      "type": "string",
+      "defaultValue": "2025-01-01-preview",
+      "metadata": {
+        "description": "Azure OpenAI REST API version consumed by src/features/common/services/azure-ai.ts (AZURE_OPENAI_API_VERSION)."
+      }
+    },
+    "searchIndexName": {
+      "type": "string",
+      "defaultValue": "[format('idx-{0}', parameters('customerSlug'))]",
+      "metadata": {
+        "description": "Azure AI Search index name for this customer (AZURE_SEARCH_INDEX_NAME)."
       }
     },
     "logRetentionDays": {
@@ -236,7 +278,7 @@
             "value": "[parameters('customerSlug')]"
           },
           "location": {
-            "value": "[parameters('azureRegion')]"
+            "value": "[parameters('aiRegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -273,7 +315,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "16307673743168702671"
+              "templateHash": "2745354425603094309"
             }
           },
           "parameters": {
@@ -417,6 +459,10 @@
               "type": "string",
               "value": "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
             },
+            "openAiName": {
+              "type": "string",
+              "value": "[variables('accountName')]"
+            },
             "openAiEndpoint": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('accountName')), '2024-04-01-preview').endpoint]"
@@ -467,7 +513,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "14047735501010680945"
+              "templateHash": "12450585898298150131"
             }
           },
           "parameters": {
@@ -513,6 +559,10 @@
               "type": "string",
               "value": "[resourceId('Microsoft.Search/searchServices', variables('searchName'))]"
             },
+            "aiSearchName": {
+              "type": "string",
+              "value": "[variables('searchName')]"
+            },
             "aiSearchEndpoint": {
               "type": "string",
               "value": "[format('https://{0}.search.windows.net', variables('searchName'))]"
@@ -539,7 +589,7 @@
             "value": "[parameters('customerSlug')]"
           },
           "location": {
-            "value": "[parameters('azureRegion')]"
+            "value": "[parameters('cosmosRegion')]"
           },
           "tags": {
             "value": "[variables('tags')]"
@@ -660,7 +710,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "10235976901805264160"
+              "templateHash": "1976911587589934876"
             }
           },
           "parameters": {
@@ -701,6 +751,10 @@
             "keyVaultId": {
               "type": "string",
               "value": "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]"
+            },
+            "keyVaultName": {
+              "type": "string",
+              "value": "[variables('vaultName')]"
             },
             "keyVaultUri": {
               "type": "string",
@@ -903,21 +957,6 @@
           },
           "tags": {
             "value": "[variables('tags')]"
-          },
-          "openAiId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.openAiId.value]"
-          },
-          "aiSearchId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug'))), '2025-04-01').outputs.aiSearchId.value]"
-          },
-          "cosmosId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug'))), '2025-04-01').outputs.cosmosId.value]"
-          },
-          "keyVaultId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug'))), '2025-04-01').outputs.keyVaultId.value]"
-          },
-          "storageId": {
-            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug'))), '2025-04-01').outputs.storageId.value]"
           }
         },
         "template": {
@@ -927,7 +966,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "12283422704904933927"
+              "templateHash": "15273397373483412251"
             }
           },
           "parameters": {
@@ -939,28 +978,12 @@
             },
             "tags": {
               "type": "object"
-            },
-            "openAiId": {
-              "type": "string"
-            },
-            "aiSearchId": {
-              "type": "string"
-            },
-            "cosmosId": {
-              "type": "string"
-            },
-            "keyVaultId": {
-              "type": "string"
-            },
-            "storageId": {
-              "type": "string"
             }
           },
           "variables": {
             "vnetName": "[format('vnet-azurechat-{0}', parameters('customerSlug'))]",
             "integrationSubnetName": "integration",
-            "privateLinkSubnetName": "privatelink",
-            "privateLinkSubnetId": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), variables('privateLinkSubnetName'))]"
+            "privateLinkSubnetName": "privatelink"
           },
           "resources": [
             {
@@ -999,136 +1022,6 @@
                   }
                 ]
               }
-            },
-            {
-              "type": "Microsoft.Network/privateEndpoints",
-              "apiVersion": "2023-09-01",
-              "name": "[format('pe-oai-{0}', parameters('customerSlug'))]",
-              "location": "[parameters('location')]",
-              "tags": "[parameters('tags')]",
-              "properties": {
-                "subnet": {
-                  "id": "[variables('privateLinkSubnetId')]"
-                },
-                "privateLinkServiceConnections": [
-                  {
-                    "name": "oai-connection",
-                    "properties": {
-                      "privateLinkServiceId": "[parameters('openAiId')]",
-                      "groupIds": [
-                        "account"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/privateEndpoints",
-              "apiVersion": "2023-09-01",
-              "name": "[format('pe-srch-{0}', parameters('customerSlug'))]",
-              "location": "[parameters('location')]",
-              "tags": "[parameters('tags')]",
-              "properties": {
-                "subnet": {
-                  "id": "[variables('privateLinkSubnetId')]"
-                },
-                "privateLinkServiceConnections": [
-                  {
-                    "name": "srch-connection",
-                    "properties": {
-                      "privateLinkServiceId": "[parameters('aiSearchId')]",
-                      "groupIds": [
-                        "searchService"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/privateEndpoints",
-              "apiVersion": "2023-09-01",
-              "name": "[format('pe-cosmos-{0}', parameters('customerSlug'))]",
-              "location": "[parameters('location')]",
-              "tags": "[parameters('tags')]",
-              "properties": {
-                "subnet": {
-                  "id": "[variables('privateLinkSubnetId')]"
-                },
-                "privateLinkServiceConnections": [
-                  {
-                    "name": "cosmos-connection",
-                    "properties": {
-                      "privateLinkServiceId": "[parameters('cosmosId')]",
-                      "groupIds": [
-                        "Sql"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/privateEndpoints",
-              "apiVersion": "2023-09-01",
-              "name": "[format('pe-kv-{0}', parameters('customerSlug'))]",
-              "location": "[parameters('location')]",
-              "tags": "[parameters('tags')]",
-              "properties": {
-                "subnet": {
-                  "id": "[variables('privateLinkSubnetId')]"
-                },
-                "privateLinkServiceConnections": [
-                  {
-                    "name": "kv-connection",
-                    "properties": {
-                      "privateLinkServiceId": "[parameters('keyVaultId')]",
-                      "groupIds": [
-                        "vault"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-              ]
-            },
-            {
-              "type": "Microsoft.Network/privateEndpoints",
-              "apiVersion": "2023-09-01",
-              "name": "[format('pe-st-{0}', parameters('customerSlug'))]",
-              "location": "[parameters('location')]",
-              "tags": "[parameters('tags')]",
-              "properties": {
-                "subnet": {
-                  "id": "[variables('privateLinkSubnetId')]"
-                },
-                "privateLinkServiceConnections": [
-                  {
-                    "name": "storage-connection",
-                    "properties": {
-                      "privateLinkServiceId": "[parameters('storageId')]",
-                      "groupIds": [
-                        "blob"
-                      ]
-                    }
-                  }
-                ]
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-              ]
             }
           ],
           "outputs": {
@@ -1142,38 +1035,13 @@
             },
             "privateLinkSubnetId": {
               "type": "string",
-              "value": "[variables('privateLinkSubnetId')]"
-            },
-            "peOpenAiId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-oai-{0}', parameters('customerSlug')))]"
-            },
-            "peAiSearchId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-srch-{0}', parameters('customerSlug')))]"
-            },
-            "peCosmosDbId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-cosmos-{0}', parameters('customerSlug')))]"
-            },
-            "peKeyVaultId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-kv-{0}', parameters('customerSlug')))]"
-            },
-            "peStorageId": {
-              "type": "string",
-              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-st-{0}', parameters('customerSlug')))]"
+              "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), variables('privateLinkSubnetName'))]"
             }
           }
         }
       },
       "dependsOn": [
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]",
-        "[subscriptionResourceId('Microsoft.Resources/deployments', format('deploy-rg-{0}', parameters('customerSlug')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug')))]"
+        "[subscriptionResourceId('Microsoft.Resources/deployments', format('deploy-rg-{0}', parameters('customerSlug')))]"
       ]
     },
     {
@@ -1201,7 +1069,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "9235013427310677901"
+              "templateHash": "18271554017274510343"
             }
           },
           "parameters": {
@@ -1218,7 +1086,8 @@
               "privatelink.search.windows.net",
               "privatelink.documents.azure.com",
               "privatelink.vaultcore.azure.net",
-              "privatelink.blob.core.windows.net"
+              "privatelink.blob.core.windows.net",
+              "privatelink.cognitiveservices.azure.com"
             ]
           },
           "resources": [
@@ -1274,12 +1143,423 @@
             "storageDnsZoneId": {
               "type": "string",
               "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[4])]"
+            },
+            "cognitiveServicesDnsZoneId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateDnsZones', variables('zones')[5])]"
             }
           }
         }
       },
       "dependsOn": [
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-networking-{0}', parameters('customerSlug')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('deploy-pe-{0}', parameters('customerSlug'))]",
+      "resourceGroup": "[variables('names').resourceGroup]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "customerSlug": {
+            "value": "[parameters('customerSlug')]"
+          },
+          "location": {
+            "value": "[parameters('azureRegion')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "privateLinkSubnetId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-networking-{0}', parameters('customerSlug'))), '2025-04-01').outputs.privateLinkSubnetId.value]"
+          },
+          "openAiId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.openAiId.value]"
+          },
+          "aiSearchId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug'))), '2025-04-01').outputs.aiSearchId.value]"
+          },
+          "cosmosId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug'))), '2025-04-01').outputs.cosmosId.value]"
+          },
+          "keyVaultId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug'))), '2025-04-01').outputs.keyVaultId.value]"
+          },
+          "storageId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug'))), '2025-04-01').outputs.storageId.value]"
+          },
+          "documentIntelligenceId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-docintel-{0}', parameters('customerSlug'))), '2025-04-01').outputs.documentIntelligenceId.value]"
+          },
+          "openAiDnsZoneId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug'))), '2025-04-01').outputs.openAiDnsZoneId.value]"
+          },
+          "aiSearchDnsZoneId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug'))), '2025-04-01').outputs.aiSearchDnsZoneId.value]"
+          },
+          "cosmosDnsZoneId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug'))), '2025-04-01').outputs.cosmosDnsZoneId.value]"
+          },
+          "keyVaultDnsZoneId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug'))), '2025-04-01').outputs.keyVaultDnsZoneId.value]"
+          },
+          "storageDnsZoneId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug'))), '2025-04-01').outputs.storageDnsZoneId.value]"
+          },
+          "cognitiveServicesDnsZoneId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug'))), '2025-04-01').outputs.cognitiveServicesDnsZoneId.value]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "66532516308293843"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string"
+            },
+            "customerSlug": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            },
+            "privateLinkSubnetId": {
+              "type": "string"
+            },
+            "openAiId": {
+              "type": "string"
+            },
+            "aiSearchId": {
+              "type": "string"
+            },
+            "cosmosId": {
+              "type": "string"
+            },
+            "keyVaultId": {
+              "type": "string"
+            },
+            "storageId": {
+              "type": "string"
+            },
+            "documentIntelligenceId": {
+              "type": "string"
+            },
+            "openAiDnsZoneId": {
+              "type": "string"
+            },
+            "aiSearchDnsZoneId": {
+              "type": "string"
+            },
+            "cosmosDnsZoneId": {
+              "type": "string"
+            },
+            "keyVaultDnsZoneId": {
+              "type": "string"
+            },
+            "storageDnsZoneId": {
+              "type": "string"
+            },
+            "cognitiveServicesDnsZoneId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-09-01",
+              "name": "[format('pe-oai-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateLinkSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "oai-connection",
+                    "properties": {
+                      "privateLinkServiceId": "[parameters('openAiId')]",
+                      "groupIds": [
+                        "account"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}/{1}', format('pe-oai-{0}', parameters('customerSlug')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "openai-config",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('openAiDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-oai-{0}', parameters('customerSlug')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-09-01",
+              "name": "[format('pe-srch-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateLinkSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "srch-connection",
+                    "properties": {
+                      "privateLinkServiceId": "[parameters('aiSearchId')]",
+                      "groupIds": [
+                        "searchService"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}/{1}', format('pe-srch-{0}', parameters('customerSlug')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "search-config",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('aiSearchDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-srch-{0}', parameters('customerSlug')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-09-01",
+              "name": "[format('pe-cosmos-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateLinkSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "cosmos-connection",
+                    "properties": {
+                      "privateLinkServiceId": "[parameters('cosmosId')]",
+                      "groupIds": [
+                        "Sql"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}/{1}', format('pe-cosmos-{0}', parameters('customerSlug')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "cosmos-config",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('cosmosDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-cosmos-{0}', parameters('customerSlug')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-09-01",
+              "name": "[format('pe-kv-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateLinkSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "kv-connection",
+                    "properties": {
+                      "privateLinkServiceId": "[parameters('keyVaultId')]",
+                      "groupIds": [
+                        "vault"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}/{1}', format('pe-kv-{0}', parameters('customerSlug')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "vault-config",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('keyVaultDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-kv-{0}', parameters('customerSlug')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-09-01",
+              "name": "[format('pe-st-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateLinkSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "storage-connection",
+                    "properties": {
+                      "privateLinkServiceId": "[parameters('storageId')]",
+                      "groupIds": [
+                        "blob"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}/{1}', format('pe-st-{0}', parameters('customerSlug')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "blob-config",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('storageDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-st-{0}', parameters('customerSlug')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-09-01",
+              "name": "[format('pe-docintel-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateLinkSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "docintel-connection",
+                    "properties": {
+                      "privateLinkServiceId": "[parameters('documentIntelligenceId')]",
+                      "groupIds": [
+                        "account"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}/{1}', format('pe-docintel-{0}', parameters('customerSlug')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "cognitiveservices-config",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('cognitiveServicesDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-docintel-{0}', parameters('customerSlug')))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "peOpenAiId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-oai-{0}', parameters('customerSlug')))]"
+            },
+            "peAiSearchId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-srch-{0}', parameters('customerSlug')))]"
+            },
+            "peCosmosDbId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-cosmos-{0}', parameters('customerSlug')))]"
+            },
+            "peKeyVaultId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-kv-{0}', parameters('customerSlug')))]"
+            },
+            "peStorageId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-st-{0}', parameters('customerSlug')))]"
+            },
+            "peDocIntelligenceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-docintel-{0}', parameters('customerSlug')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-docintel-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-networking-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug')))]"
       ]
     },
     {
@@ -1427,6 +1707,42 @@
           },
           "appInsightsConnectionString": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-observability-{0}', parameters('customerSlug'))), '2025-04-01').outputs.appInsightsConnectionString.value]"
+          },
+          "openAiInstanceName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.openAiName.value]"
+          },
+          "openAiApiVersion": {
+            "value": "[parameters('openAiApiVersion')]"
+          },
+          "chatDeploymentName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.chatModelDeploymentName.value]"
+          },
+          "embeddingDeploymentName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.embeddingModelDeploymentName.value]"
+          },
+          "embeddingDimensions": {
+            "value": "[parameters('embeddingModelDimensions')]"
+          },
+          "searchName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug'))), '2025-04-01').outputs.aiSearchName.value]"
+          },
+          "searchIndexName": {
+            "value": "[parameters('searchIndexName')]"
+          },
+          "cosmosDbUri": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug'))), '2025-04-01').outputs.cosmosEndpoint.value]"
+          },
+          "keyVaultName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug'))), '2025-04-01').outputs.keyVaultName.value]"
+          },
+          "storageAccountName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug'))), '2025-04-01').outputs.storageName.value]"
+          },
+          "documentIntelligenceEndpoint": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-docintel-{0}', parameters('customerSlug'))), '2025-04-01').outputs.documentIntelligenceEndpoint.value]"
+          },
+          "tenantSlug": {
+            "value": "[parameters('customerSlug')]"
           }
         },
         "template": {
@@ -1436,7 +1752,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "3702199605501103037"
+              "templateHash": "13142147257486832755"
             }
           },
           "parameters": {
@@ -1460,11 +1776,84 @@
             },
             "appInsightsConnectionString": {
               "type": "string"
+            },
+            "openAiInstanceName": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure OpenAI resource name (NOT the endpoint URL) — azure-ai.ts requireEnv(\"AZURE_OPENAI_API_INSTANCE_NAME\")."
+              }
+            },
+            "openAiApiVersion": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure OpenAI REST API version — azure-ai.ts AZURE_OPENAI_API_VERSION."
+              }
+            },
+            "chatDeploymentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Chat model deployment name — azure-ai.ts AZURE_OPENAI_CHAT_DEPLOYMENT."
+              }
+            },
+            "embeddingDeploymentName": {
+              "type": "string",
+              "metadata": {
+                "description": "Embedding model deployment name — azure-ai.ts AZURE_OPENAI_EMBEDDING_DEPLOYMENT."
+              }
+            },
+            "embeddingDimensions": {
+              "type": "int",
+              "metadata": {
+                "description": "Embedding vector width — azure-ai.ts AZURE_OPENAI_EMBEDDING_DIMENSIONS."
+              }
+            },
+            "searchName": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure AI Search resource name (NOT the endpoint URL) — ai-search.ts AZURE_SEARCH_NAME."
+              }
+            },
+            "searchIndexName": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure AI Search index name — ai-search.ts / azure-ai-search.ts AZURE_SEARCH_INDEX_NAME."
+              }
+            },
+            "cosmosDbUri": {
+              "type": "string",
+              "metadata": {
+                "description": "Cosmos DB endpoint URI — cosmos.ts AZURE_COSMOSDB_URI."
+              }
+            },
+            "keyVaultName": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault name (NOT the endpoint URL) — key-vault.ts AZURE_KEY_VAULT_NAME."
+              }
+            },
+            "storageAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Storage account name — azure-storage.ts AZURE_STORAGE_ACCOUNT_NAME."
+              }
+            },
+            "documentIntelligenceEndpoint": {
+              "type": "string",
+              "metadata": {
+                "description": "Document Intelligence endpoint URL — document-intelligence.ts AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT."
+              }
+            },
+            "tenantSlug": {
+              "type": "string",
+              "metadata": {
+                "description": "Customer slug echoed back as TENANT_SLUG — src/features/theme/tenant-resolver.ts fallback when the Host header is not a recognized {slug}-sales360 subdomain."
+              }
             }
           },
           "variables": {
             "planName": "[format('plan-azurechat-{0}', parameters('customerSlug'))]",
-            "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]"
+            "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]",
+            "nextAuthUrlPlaceholder": "[format('https://{0}.azurewebsites.net', variables('appName'))]"
           },
           "resources": [
             {
@@ -1499,32 +1888,60 @@
                   "vnetRouteAllEnabled": true,
                   "appSettings": [
                     {
-                      "name": "AZURE_OPENAI_ENDPOINT",
-                      "value": ""
+                      "name": "AZURE_OPENAI_API_INSTANCE_NAME",
+                      "value": "[parameters('openAiInstanceName')]"
                     },
                     {
-                      "name": "AZURE_SEARCH_ENDPOINT",
-                      "value": ""
+                      "name": "AZURE_OPENAI_API_VERSION",
+                      "value": "[parameters('openAiApiVersion')]"
                     },
                     {
-                      "name": "AZURE_COSMOSDB_ENDPOINT",
-                      "value": ""
+                      "name": "AZURE_OPENAI_CHAT_DEPLOYMENT",
+                      "value": "[parameters('chatDeploymentName')]"
                     },
                     {
-                      "name": "AZURE_KEYVAULT_ENDPOINT",
-                      "value": ""
+                      "name": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+                      "value": "[parameters('embeddingDeploymentName')]"
+                    },
+                    {
+                      "name": "AZURE_OPENAI_EMBEDDING_DIMENSIONS",
+                      "value": "[string(parameters('embeddingDimensions'))]"
+                    },
+                    {
+                      "name": "AZURE_SEARCH_NAME",
+                      "value": "[parameters('searchName')]"
+                    },
+                    {
+                      "name": "AZURE_SEARCH_INDEX_NAME",
+                      "value": "[parameters('searchIndexName')]"
+                    },
+                    {
+                      "name": "AZURE_COSMOSDB_URI",
+                      "value": "[parameters('cosmosDbUri')]"
+                    },
+                    {
+                      "name": "AZURE_KEY_VAULT_NAME",
+                      "value": "[parameters('keyVaultName')]"
                     },
                     {
                       "name": "AZURE_STORAGE_ACCOUNT_NAME",
-                      "value": ""
+                      "value": "[parameters('storageAccountName')]"
                     },
                     {
                       "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
-                      "value": ""
+                      "value": "[parameters('documentIntelligenceEndpoint')]"
                     },
                     {
                       "name": "USE_MANAGED_IDENTITIES",
                       "value": "true"
+                    },
+                    {
+                      "name": "TENANT_SLUG",
+                      "value": "[parameters('tenantSlug')]"
+                    },
+                    {
+                      "name": "NEXTAUTH_URL",
+                      "value": "[variables('nextAuthUrlPlaceholder')]"
                     },
                     {
                       "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
@@ -1560,8 +1977,15 @@
         }
       },
       "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-docintel-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-networking-{0}', parameters('customerSlug')))]",
-        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-observability-{0}', parameters('customerSlug')))]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-observability-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-pe-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug')))]"
       ]
     },
     {

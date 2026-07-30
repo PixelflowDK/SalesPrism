@@ -105,6 +105,7 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
 }
 
 output openAiId string = openAiAccount.id
+output openAiName string = openAiAccount.name
 output openAiEndpoint string = openAiAccount.properties.endpoint
 output chatModelDeploymentName string = openAiDeployment.name
 output embeddingModelDeploymentName string = embeddingDeployment.name

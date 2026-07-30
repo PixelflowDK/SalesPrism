@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "3702199605501103037"
+      "templateHash": "13142147257486832755"
     }
   },
   "parameters": {
@@ -29,11 +29,84 @@
     },
     "appInsightsConnectionString": {
       "type": "string"
+    },
+    "openAiInstanceName": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure OpenAI resource name (NOT the endpoint URL) — azure-ai.ts requireEnv(\"AZURE_OPENAI_API_INSTANCE_NAME\")."
+      }
+    },
+    "openAiApiVersion": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure OpenAI REST API version — azure-ai.ts AZURE_OPENAI_API_VERSION."
+      }
+    },
+    "chatDeploymentName": {
+      "type": "string",
+      "metadata": {
+        "description": "Chat model deployment name — azure-ai.ts AZURE_OPENAI_CHAT_DEPLOYMENT."
+      }
+    },
+    "embeddingDeploymentName": {
+      "type": "string",
+      "metadata": {
+        "description": "Embedding model deployment name — azure-ai.ts AZURE_OPENAI_EMBEDDING_DEPLOYMENT."
+      }
+    },
+    "embeddingDimensions": {
+      "type": "int",
+      "metadata": {
+        "description": "Embedding vector width — azure-ai.ts AZURE_OPENAI_EMBEDDING_DIMENSIONS."
+      }
+    },
+    "searchName": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure AI Search resource name (NOT the endpoint URL) — ai-search.ts AZURE_SEARCH_NAME."
+      }
+    },
+    "searchIndexName": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure AI Search index name — ai-search.ts / azure-ai-search.ts AZURE_SEARCH_INDEX_NAME."
+      }
+    },
+    "cosmosDbUri": {
+      "type": "string",
+      "metadata": {
+        "description": "Cosmos DB endpoint URI — cosmos.ts AZURE_COSMOSDB_URI."
+      }
+    },
+    "keyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Key Vault name (NOT the endpoint URL) — key-vault.ts AZURE_KEY_VAULT_NAME."
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "metadata": {
+        "description": "Storage account name — azure-storage.ts AZURE_STORAGE_ACCOUNT_NAME."
+      }
+    },
+    "documentIntelligenceEndpoint": {
+      "type": "string",
+      "metadata": {
+        "description": "Document Intelligence endpoint URL — document-intelligence.ts AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT."
+      }
+    },
+    "tenantSlug": {
+      "type": "string",
+      "metadata": {
+        "description": "Customer slug echoed back as TENANT_SLUG — src/features/theme/tenant-resolver.ts fallback when the Host header is not a recognized {slug}-sales360 subdomain."
+      }
     }
   },
   "variables": {
     "planName": "[format('plan-azurechat-{0}', parameters('customerSlug'))]",
-    "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]"
+    "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]",
+    "nextAuthUrlPlaceholder": "[format('https://{0}.azurewebsites.net', variables('appName'))]"
   },
   "resources": [
     {
@@ -68,32 +141,60 @@
           "vnetRouteAllEnabled": true,
           "appSettings": [
             {
-              "name": "AZURE_OPENAI_ENDPOINT",
-              "value": ""
+              "name": "AZURE_OPENAI_API_INSTANCE_NAME",
+              "value": "[parameters('openAiInstanceName')]"
             },
             {
-              "name": "AZURE_SEARCH_ENDPOINT",
-              "value": ""
+              "name": "AZURE_OPENAI_API_VERSION",
+              "value": "[parameters('openAiApiVersion')]"
             },
             {
-              "name": "AZURE_COSMOSDB_ENDPOINT",
-              "value": ""
+              "name": "AZURE_OPENAI_CHAT_DEPLOYMENT",
+              "value": "[parameters('chatDeploymentName')]"
             },
             {
-              "name": "AZURE_KEYVAULT_ENDPOINT",
-              "value": ""
+              "name": "AZURE_OPENAI_EMBEDDING_DEPLOYMENT",
+              "value": "[parameters('embeddingDeploymentName')]"
+            },
+            {
+              "name": "AZURE_OPENAI_EMBEDDING_DIMENSIONS",
+              "value": "[string(parameters('embeddingDimensions'))]"
+            },
+            {
+              "name": "AZURE_SEARCH_NAME",
+              "value": "[parameters('searchName')]"
+            },
+            {
+              "name": "AZURE_SEARCH_INDEX_NAME",
+              "value": "[parameters('searchIndexName')]"
+            },
+            {
+              "name": "AZURE_COSMOSDB_URI",
+              "value": "[parameters('cosmosDbUri')]"
+            },
+            {
+              "name": "AZURE_KEY_VAULT_NAME",
+              "value": "[parameters('keyVaultName')]"
             },
             {
               "name": "AZURE_STORAGE_ACCOUNT_NAME",
-              "value": ""
+              "value": "[parameters('storageAccountName')]"
             },
             {
               "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
-              "value": ""
+              "value": "[parameters('documentIntelligenceEndpoint')]"
             },
             {
               "name": "USE_MANAGED_IDENTITIES",
               "value": "true"
+            },
+            {
+              "name": "TENANT_SLUG",
+              "value": "[parameters('tenantSlug')]"
+            },
+            {
+              "name": "NEXTAUTH_URL",
+              "value": "[variables('nextAuthUrlPlaceholder')]"
             },
             {
               "name": "APPINSIGHTS_INSTRUMENTATIONKEY",

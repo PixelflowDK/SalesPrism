@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "12283422704904933927"
+      "templateHash": "15273397373483412251"
     }
   },
   "parameters": {
@@ -17,28 +17,12 @@
     },
     "tags": {
       "type": "object"
-    },
-    "openAiId": {
-      "type": "string"
-    },
-    "aiSearchId": {
-      "type": "string"
-    },
-    "cosmosId": {
-      "type": "string"
-    },
-    "keyVaultId": {
-      "type": "string"
-    },
-    "storageId": {
-      "type": "string"
     }
   },
   "variables": {
     "vnetName": "[format('vnet-azurechat-{0}', parameters('customerSlug'))]",
     "integrationSubnetName": "integration",
-    "privateLinkSubnetName": "privatelink",
-    "privateLinkSubnetId": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), variables('privateLinkSubnetName'))]"
+    "privateLinkSubnetName": "privatelink"
   },
   "resources": [
     {
@@ -77,136 +61,6 @@
           }
         ]
       }
-    },
-    {
-      "type": "Microsoft.Network/privateEndpoints",
-      "apiVersion": "2023-09-01",
-      "name": "[format('pe-oai-{0}', parameters('customerSlug'))]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "properties": {
-        "subnet": {
-          "id": "[variables('privateLinkSubnetId')]"
-        },
-        "privateLinkServiceConnections": [
-          {
-            "name": "oai-connection",
-            "properties": {
-              "privateLinkServiceId": "[parameters('openAiId')]",
-              "groupIds": [
-                "account"
-              ]
-            }
-          }
-        ]
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.Network/privateEndpoints",
-      "apiVersion": "2023-09-01",
-      "name": "[format('pe-srch-{0}', parameters('customerSlug'))]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "properties": {
-        "subnet": {
-          "id": "[variables('privateLinkSubnetId')]"
-        },
-        "privateLinkServiceConnections": [
-          {
-            "name": "srch-connection",
-            "properties": {
-              "privateLinkServiceId": "[parameters('aiSearchId')]",
-              "groupIds": [
-                "searchService"
-              ]
-            }
-          }
-        ]
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.Network/privateEndpoints",
-      "apiVersion": "2023-09-01",
-      "name": "[format('pe-cosmos-{0}', parameters('customerSlug'))]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "properties": {
-        "subnet": {
-          "id": "[variables('privateLinkSubnetId')]"
-        },
-        "privateLinkServiceConnections": [
-          {
-            "name": "cosmos-connection",
-            "properties": {
-              "privateLinkServiceId": "[parameters('cosmosId')]",
-              "groupIds": [
-                "Sql"
-              ]
-            }
-          }
-        ]
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.Network/privateEndpoints",
-      "apiVersion": "2023-09-01",
-      "name": "[format('pe-kv-{0}', parameters('customerSlug'))]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "properties": {
-        "subnet": {
-          "id": "[variables('privateLinkSubnetId')]"
-        },
-        "privateLinkServiceConnections": [
-          {
-            "name": "kv-connection",
-            "properties": {
-              "privateLinkServiceId": "[parameters('keyVaultId')]",
-              "groupIds": [
-                "vault"
-              ]
-            }
-          }
-        ]
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.Network/privateEndpoints",
-      "apiVersion": "2023-09-01",
-      "name": "[format('pe-st-{0}', parameters('customerSlug'))]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "properties": {
-        "subnet": {
-          "id": "[variables('privateLinkSubnetId')]"
-        },
-        "privateLinkServiceConnections": [
-          {
-            "name": "storage-connection",
-            "properties": {
-              "privateLinkServiceId": "[parameters('storageId')]",
-              "groupIds": [
-                "blob"
-              ]
-            }
-          }
-        ]
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-      ]
     }
   ],
   "outputs": {
@@ -220,27 +74,7 @@
     },
     "privateLinkSubnetId": {
       "type": "string",
-      "value": "[variables('privateLinkSubnetId')]"
-    },
-    "peOpenAiId": {
-      "type": "string",
-      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-oai-{0}', parameters('customerSlug')))]"
-    },
-    "peAiSearchId": {
-      "type": "string",
-      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-srch-{0}', parameters('customerSlug')))]"
-    },
-    "peCosmosDbId": {
-      "type": "string",
-      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-cosmos-{0}', parameters('customerSlug')))]"
-    },
-    "peKeyVaultId": {
-      "type": "string",
-      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-kv-{0}', parameters('customerSlug')))]"
-    },
-    "peStorageId": {
-      "type": "string",
-      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-st-{0}', parameters('customerSlug')))]"
+      "value": "[format('{0}/subnets/{1}', resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), variables('privateLinkSubnetName'))]"
     }
   }
 }

@@ -7,9 +7,10 @@
     "stage4-ui-worker"
   ],
   "blockers": [
-    "USER ACTION: delete the empty Failed-state validation Cosmos account (rg-azurechat-val1 / cosmos-azurechat-val1) — destructive az commands are classifier-blocked in auto mode; needed before redeploy r3",
-    "USER ACTION: the two role-assignment commands for the pipeline service principal (see resume.md) — same classifier block",
     "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large (operator portal request, 2-5 days)"
+  ],
+  "resolved2026_07_30": [
+    "User deleted wedged Cosmos account (verified NotFound) and created both pipeline SP role assignments (Contributor + conditioned RBAC Administrator) at 16:20Z"
   ],
   "quotaGated": [
     "gpt-5.4",
