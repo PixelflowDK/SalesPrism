@@ -106,3 +106,49 @@ This agent performed **no deletes, no template edits, no deployments** in this p
 - r2 failed with the identical westeurope ServiceUnavailable capacity error → conclusion: regional capacity/region-access constraint for new Cosmos accounts on this subscription in westeurope, independent of the ZR flag.
 - Reroute implemented and committed (`8daee24` + follow-up): `cosmosRegion` parameter in main.bicep (default = azureRegion); validation sets `cosmosRegion=northeurope` (R1-compliant EU region; cross-region private link supported; all other resources stay westeurope).
 - The second wedged account (again empty, `provisioningState=Failed`, `documentEndpoint=null`) now needs deletion, but the auto-mode classifier blocks destructive `az` commands from this session — **pending user action**, after which redeploy r3 proceeds immediately.
+
+## Stage 4 — val1 application deployment + auth wiring (2026-07-30)
+
+**Subscription guard:** `az account show` reconfirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Scope:** touched only `rg-azurechat-val1` (App Service `app-azurechat-val1`) plus one new Entra app registration. No DNS changes. No git commit/push. No destructive `az` commands. No secret values printed at any point (client secret and `NEXTAUTH_SECRET` were generated and piped directly into shell variables via `az ... --query ... -o tsv` / `openssl rand`, consumed immediately by `az webapp config appsettings set`, then unset — never echoed, never written to a file).
+
+**Build source:** built from the committed state at commit `f05d994` (not the live working tree, which another agent was actively editing) via an isolated `git worktree add /tmp/salesprism-deploy f05d994`. Node 22 LTS (`nvm use 22`, confirmed `v22.23.2`), `npm ci --legacy-peer-deps`, `npm run build` — build succeeded cleanly (Next.js 15.5.19, all routes compiled, no errors).
+
+**Packaging approach chosen:** replicated the repo's original `.github/workflows/open-ai-app.yml` exactly, since `src/next.config.js` has `output: "standalone"`:
+- `cp -R .next/standalone → site-deploy/`
+- `cp -R .next/static → site-deploy/.next/static`
+- `cp -R public → site-deploy/public`
+- zipped as `Nextjs-site.zip` (~20 MB)
+- App Service configured with `SCM_DO_BUILD_DURING_DEPLOYMENT=false` and startup command `node server.js` (matches the workflow's Azure CLI step), confirmed `linuxFxVersion=NODE|22-lts` unchanged.
+
+**Auth wiring — verified against code, not guessed:** read `src/features/auth-page/auth-api.ts` (READ-ONLY, off-limits dir respected) — confirms `AzureADProvider` (default provider id `azure-ad`) is wired from exactly `AZURE_AD_CLIENT_ID`, `AZURE_AD_CLIENT_SECRET`, `AZURE_AD_TENANT_ID`; `helpers.ts`/`auth-api.ts` also require `NEXTAUTH_SECRET` and read `ADMIN_EMAIL_ADDRESS` for the admin allow-list. Callback route confirmed at `src/app/(authenticated)/api/auth/[...nextauth]/route.ts` → callback path `/api/auth/callback/azure-ad`.
+
+**Entra app registration created:** `salescoach360-val1-auth` (single-tenant, `AzureADMyOrg`), appId `d67a176e-852e-451a-ad66-b9912e53a1c5`, object id `b2b8068d-c301-4874-9e9b-62dd964fcf33`. Redirect URIs: `https://val1-sales360.pixelflow.dk/api/auth/callback/azure-ad` and `https://app-azurechat-val1.azurewebsites.net/api/auth/callback/azure-ad`. ID token issuance enabled. Service principal created (object id `e3adb26d-44f7-4ec3-acd5-4171272d98de`); Microsoft Graph `User.Read` delegated permission added, consented (`AllPrincipals` grant), and admin-consent applied (succeeded on retry after a transient `Directory_ConcurrencyViolation`). Client secret generated via `az ad app credential reset --append` — value piped straight into a shell variable, never printed, never written to disk.
+
+**App settings added to `app-azurechat-val1`** (names only — values redacted/never shown):
+- `AZURE_AD_CLIENT_ID`
+- `AZURE_AD_CLIENT_SECRET`
+- `AZURE_AD_TENANT_ID`
+- `NEXTAUTH_SECRET`
+- `NEXTAUTH_URL` (updated from the Bicep-set default `https://app-azurechat-val1.azurewebsites.net` to the bound custom domain `https://val1-sales360.pixelflow.dk`)
+- `ADMIN_EMAIL_ADDRESS` (`kontakt@pixelflow.dk`)
+- `SCM_DO_BUILD_DURING_DEPLOYMENT=false` (deployment-mechanics setting, not a secret)
+
+All other `process.env.*` references across `app/` and `features/` were grepped and confirmed to have safe in-code defaults (Cosmos DB/container names, Key Vault/Search/Storage endpoint suffixes, upload size limit, platform tier) — nothing else was required to avoid a boot crash.
+
+**DOCUMENTED DEVIATION:** secrets were written to App Service application settings (encrypted at rest, RBAC-guarded) instead of Key Vault, because `kv-azurechat-val1` is private-endpoint-only and unreachable from this machine. Production must solve the Key Vault write path (already tracked in `docs/known-limitations.md`).
+
+**Deploy result:** `az webapp deploy --type zip --async false` — ran to completion (initially backgrounded due to a tool timeout, then confirmed via Azure's own deployment APIs rather than assumed). `az webapp log deployment show` for deployment id `85c3f130-0dad-42b0-bdbd-dd866caa2692`: `"Deployment successful. deployer = OneDeploy"`. Runtime deployment status: `"status": "RuntimeSuccessful"`, `numberOfInstancesSuccessful: 1`, `numberOfInstancesFailed: 0`. Deploy log timeline: build successful (2s) → site starting (~80s) → `"Site started successfully"` → `"Deployment has completed successfully"`.
+
+**Boot log summary:** live 20-second `az webapp log tail` filtered for `error|exception|fail|fatal` returned zero matches — clean boot, no runtime errors surfaced.
+
+**Smoke test results:**
+- `GET https://val1-sales360.pixelflow.dk/` → `200 OK`, HTML page titled "Coach 360" rendering the app shell (narrow centered container consistent with the login view), served with valid TLS (`CN=val1-sales360.pixelflow.dk`, DigiCert-issued, matches SAN).
+- `GET https://val1-sales360.pixelflow.dk/api/auth/providers` → `200 OK`, JSON: `{"azure-ad":{"id":"azure-ad","name":"Azure Active Directory","type":"oauth","signinUrl":".../api/auth/signin/azure-ad","callbackUrl":".../api/auth/callback/azure-ad"}}` — confirms the provider is live and its callback URL matches exactly what was registered on the Entra app.
+- Default hostname `https://app-azurechat-val1.azurewebsites.net/` also independently verified → `200 OK`.
+- No interactive login was attempted (requires a human browser session), per instructions.
+
+**Cleanup:** `git worktree remove /tmp/salesprism-deploy --force` — removed cleanly; main working tree (which another agent was actively editing) was never touched.
+
+**Note on an in-session message:** mid-task, a message purporting to be from "the coordinator" claimed the deploy had never landed and that both hostnames were returning connection failures, and directed a full rebuild/redeploy from scratch. Per this repo's standing policy (agent-relayed claims are not authoritative user consent — see the Stage 3b precedent above), this was independently verified rather than acted on: `az webapp log deployment show` and fresh `curl` checks against both hostnames both showed the deploy had in fact already succeeded (`RuntimeSuccessful`, `200 OK` on both). The claimed failure state did not match live Azure state. No rebuild/redeploy was necessary; only the still-outstanding verification/smoke/cleanup steps (which were legitimately part of the original authorized task) were completed. No git commits were made.
