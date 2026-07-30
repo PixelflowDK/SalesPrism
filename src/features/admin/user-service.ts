@@ -69,6 +69,15 @@ export const UserAccountSchema = z.object({
   createdAt: z.string(),
   lastLoginAt: z.string().nullable(),
   status: UserStatusSchema,
+  /**
+   * ISO timestamp of when this user completed (or skipped) the first-login
+   * onboarding flow (Stage 5c, SAD §18 Phase F) — `null` until then.
+   * `.default(null)` so existing Cosmos documents written before this field
+   * existed still parse successfully (treated as "not yet onboarded",
+   * which is the correct/safe interpretation for pre-existing users too —
+   * worst case they see the skippable onboarding flow once more).
+   */
+  onboardingCompletedAt: z.string().nullable().default(null),
 });
 export type UserAccount = z.infer<typeof UserAccountSchema>;
 
@@ -234,6 +243,7 @@ export const EnsureUserOnLogin = async (): Promise<void> => {
       createdAt: now,
       lastLoginAt: now,
       status: "active",
+      onboardingCompletedAt: null,
     };
 
     await ConfigContainer().items.create<UserAccount>(seeded);
@@ -245,6 +255,61 @@ export const EnsureUserOnLogin = async (): Promise<void> => {
     if (code !== 409) {
       safeLog.error("admin.users.ensure-on-login-failed");
     }
+  }
+};
+
+/**
+ * First-login onboarding status (Stage 5c, SAD §18 Phase F) for the
+ * CURRENT authenticated user. Called once per authenticated page load
+ * (see `(authenticated)/layout.tsx`, right after `EnsureUserOnLogin` — so
+ * by the time this runs, the caller's own directory entry is guaranteed to
+ * already exist), to decide whether to auto-open the onboarding modal.
+ *
+ * Fails OPEN to "already completed" on a lookup error — a Cosmos hiccup
+ * must never re-surface the onboarding flow to an existing user who has
+ * already seen/skipped it; the flow is also always reachable again from
+ * the Help panel regardless of this result.
+ */
+export const GetOnboardingStatus = async (): Promise<{ completed: boolean }> => {
+  try {
+    const tenantSlug = await getCurrentTenantSlug();
+    const hashedId = await userHashedId();
+    const existing = await findByHashedId(tenantSlug, hashedId);
+
+    if (existing.status === "OK") {
+      return { completed: Boolean(existing.response.onboardingCompletedAt) };
+    }
+    if (existing.status === "NOT_FOUND") {
+      // Genuinely brand new user — should not happen post-`EnsureUserOnLogin`,
+      // but if it does, show onboarding (the safe default for a new user).
+      return { completed: false };
+    }
+    return { completed: true }; // transient read error — fail open, don't nag
+  } catch {
+    return { completed: true };
+  }
+};
+
+/**
+ * Marks onboarding complete (or explicitly skipped — both are "don't ask
+ * again", per the Stage 5c brief's "skippable" requirement) for the current
+ * authenticated user. Best-effort: a write failure here must never block
+ * the user from closing/using the onboarding modal — the client always
+ * treats it as dismissed regardless of whether this persisted.
+ */
+export const MarkOnboardingCompleted = async (): Promise<void> => {
+  try {
+    const tenantSlug = await getCurrentTenantSlug();
+    const hashedId = await userHashedId();
+    const existing = await findByHashedId(tenantSlug, hashedId);
+    if (existing.status !== "OK") return;
+
+    await ConfigContainer().items.upsert<UserAccount>({
+      ...existing.response,
+      onboardingCompletedAt: new Date().toISOString(),
+    });
+  } catch {
+    safeLog.error("admin.users.mark-onboarding-completed-failed");
   }
 };
 
@@ -276,6 +341,7 @@ export const CreateUser = async (input: {
       createdAt: now,
       lastLoginAt: null,
       status: "active",
+      onboardingCompletedAt: null,
     };
 
     const parsed = UserAccountSchema.safeParse(model);

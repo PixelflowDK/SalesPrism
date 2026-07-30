@@ -35,6 +35,85 @@ export const MODULE_CONFIG_ATTRIBUTE = "SALES_COACH_MODULE_CONFIG";
 export const MEETING_BRIEF_ATTRIBUTE = "SALES_COACH_MEETING_BRIEF";
 
 /**
+ * The 7 Sales Coach modules — SAD §27.2. Lives here (not context-injection.ts,
+ * which re-exports it for backward compatibility) specifically so it stays
+ * importable from CLIENT components: this file has no `"server-only"` pragma,
+ * while context-injection.ts is server-only end-to-end (Cosmos + prompt
+ * assembly). The Help panel's "The 7 models" tab (Stage 5c, SAD §18 Phase F)
+ * needs this exact registry client-side without pulling in Cosmos.
+ */
+export type SalesCoachModuleDefinition = {
+  key: ModuleKey;
+  name: string;
+  essence: string;
+};
+
+/**
+ * The 7 Sales Coach modules — SAD §27.2. Names + "methodology essence"
+ * (2-3 sentence guidance strings, written from the SAD/backlog
+ * descriptions) live in code, not Cosmos — only the per-tenant
+ * active/order/customName/contentOverride toggle state is persisted
+ * (`ModuleConfig`, §27.3, see context-injection.ts). `context-injection.ts`
+ * re-exports both constants below for backward compatibility with existing
+ * imports — this file is the source of truth (see the doc-comment above
+ * `SalesCoachModuleDefinition`).
+ */
+export const SALES_COACH_MODULE_REGISTRY: Record<ModuleKey, SalesCoachModuleDefinition> = {
+  "module-01": {
+    key: "module-01",
+    name: "1st Position vs 2nd Position Model",
+    essence:
+      "Seek first to understand, then to be understood. 1st Position communication starts from your own products, features and agenda; 2nd Position starts from the customer's world — their vision, situation and language. Help the seller notice when they slip into 1st Position and reframe toward 2nd Position openings.",
+  },
+  "module-02": {
+    key: "module-02",
+    name: "360° Customer Understanding Model",
+    essence:
+      "Understand the customer's business far beyond their logo: their strategic vision, tactical initiatives and day-to-day operational reality. A complete picture spans all three levels — strategic, tactical and operational — not just the person in front of you.",
+  },
+  "module-03": {
+    key: "module-03",
+    name: "Personas & Stakeholder Model",
+    essence:
+      "Map decision-makers, influencers and stakeholders by organisational level (strategic/tactical/operational) and persona archetype. Each persona has a primary value language, known triggers and a communication style that works — and one that doesn't.",
+  },
+  "module-04": {
+    key: "module-04",
+    name: "Value Conversation Model",
+    essence:
+      "Speak the customer's value language across five value areas: Speed & Agility, People & Processes, Risk & Governance, Economics & Control, and Sustainability & Responsibility. Lead discovery and framing with the value area(s) most relevant to this stakeholder, not a generic pitch.",
+  },
+  "module-05": {
+    key: "module-05",
+    name: "Why–What–How–Value Model",
+    essence:
+      "Communicate with purpose: understand the customer's Why before presenting What you do, How you do it, or what Value it creates. Sequencing matters — leading with What/How before establishing Why reverts the conversation to 1st Position.",
+  },
+  "module-06": {
+    key: "module-06",
+    name: "Continuous Lifecycle & Partnership Model",
+    essence:
+      "Move from vendor to trusted strategic partner across the full customer lifecycle — not just the sale. Look for opportunities to reinforce partnership value at every touchpoint, before and after the deal closes.",
+  },
+  "module-07": {
+    key: "module-07",
+    name: "Questionary & Active Listening Model",
+    essence:
+      "Curiosity with structure creates understanding. Use open, layered questioning (not a checklist) combined with active listening to surface what the customer hasn't said explicitly yet — the real challenge behind the stated one.",
+  },
+};
+
+export const ALL_MODULE_KEYS: ModuleKey[] = [
+  "module-01",
+  "module-02",
+  "module-03",
+  "module-04",
+  "module-05",
+  "module-06",
+  "module-07",
+];
+
+/**
  * The 5 Value Conversation Model value areas (SAD §27.2 module-04 / DESIGN.md
  * value-area mini-cards).
  */

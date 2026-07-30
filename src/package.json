@@ -10,7 +10,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "debug": "set NODE_OPTIONS=--inspect && next dev"
+    "debug": "set NODE_OPTIONS=--inspect && next dev",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@ai-sdk/azure": "^3.0.70",
@@ -21,6 +23,7 @@
     "@azure/search-documents": "^12.0.0",
     "@azure/storage-blob": "^12.17.0",
     "@codemirror/lang-javascript": "^6.2.1",
+    "@ducanh2912/next-pwa": "^10.2.9",
     "@markdoc/markdoc": "^0.4.0",
     "@radix-ui/react-accordion": "^1.1.2",
     "@radix-ui/react-avatar": "^1.0.4",
@@ -63,11 +66,13 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "14.0.4",
     "postcss": "^8",
     "tailwindcss": "^3.3.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

@@ -30,7 +30,9 @@ import {
 
 const customerEntityDocId = () => `customer-${uniqueId()}`;
 
-const normalizeCustomerName = (name: string): string => name.trim().toLowerCase();
+// Exported (was module-private) so it can be unit-tested directly — no
+// behavior change. See customer-entity-service.test.ts.
+export const normalizeCustomerName = (name: string): string => name.trim().toLowerCase();
 
 const parseCustomerEntity = (raw: unknown): ServerActionResponse<CustomerEntity> => {
   const parsed = CustomerEntitySchema.safeParse(raw);
@@ -201,7 +203,9 @@ export const UpdateCustomerEntity = async (
 
 const dedupe = (values: string[]): string[] => Array.from(new Set(values.filter((v) => v.trim().length > 0)));
 
-const mergeContacts = (
+// Exported (was module-private) so it can be unit-tested directly — no
+// behavior change. See customer-entity-service.test.ts.
+export const mergeContacts = (
   existing: CustomerContact[],
   incoming: CustomerContact[]
 ): CustomerContact[] => {

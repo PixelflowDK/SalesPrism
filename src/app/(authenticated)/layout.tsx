@@ -1,6 +1,9 @@
-import { EnsureUserOnLogin } from "@/features/admin/user-service";
+import { EnsureUserOnLogin, GetOnboardingStatus } from "@/features/admin/user-service";
+import { isSpeechConfigured } from "@/features/common/services/azure-speech";
+import { HelpPanel } from "@/features/help/help-panel";
 import { AuthenticatedProviders } from "@/features/globals/providers";
 import { MainMenu } from "@/features/main-menu/main-menu";
+import { OnboardingController } from "@/features/onboarding/onboarding-controller";
 import { AI_NAME } from "@/features/theme/theme-config";
 import { cn } from "@/ui/lib";
 
@@ -24,12 +27,19 @@ export default async function RootLayout({
   // never block the whole authenticated app shell from rendering.
   await EnsureUserOnLogin();
 
+  // Stage 5c, SAD §18 Phase F — resolved once per request, right after
+  // `EnsureUserOnLogin` so the caller's own directory entry is guaranteed
+  // to exist by the time this runs (see `GetOnboardingStatus` doc comment).
+  const onboardingStatus = await GetOnboardingStatus();
+
   return (
-    <AuthenticatedProviders>
+    <AuthenticatedProviders speechEnabled={isSpeechConfigured()}>
       <div className={cn("flex flex-1 items-stretch")}>
         <MainMenu />
         <div className="flex-1 flex">{children}</div>
       </div>
+      <OnboardingController initiallyCompleted={onboardingStatus.completed} />
+      <HelpPanel />
     </AuthenticatedProviders>
   );
 }

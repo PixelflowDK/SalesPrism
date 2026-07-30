@@ -1,10 +1,11 @@
 import { TenantThemeStyle } from "@/features/theme/tenant-theme-style";
-import { AI_NAME } from "@/features/theme/theme-config";
+import { AI_DESCRIPTION, AI_NAME } from "@/features/theme/theme-config";
 import { ThemeProvider } from "@/features/theme/theme-provider";
 import { EnsureTenantTheme, TenantTheme } from "@/features/theme/tenant-theme";
 import { resolveTenantSlug } from "@/features/theme/tenant-resolver";
 import { Toaster } from "@/features/ui/toaster";
 import { cn } from "@/ui/lib";
+import type { Metadata, Viewport } from "next";
 import { DM_Mono, DM_Sans, Playfair_Display } from "next/font/google";
 import { headers } from "next/headers";
 import "./globals.css";
@@ -32,9 +33,26 @@ const fontMono = DM_Mono({
   display: "swap",
 });
 
-export const metadata = {
+// PWA — SAD v2.7 §18 Phase F / docs/Frontend_Teknologi_Reference.md §9. `manifest`
+// wires public/manifest.json (name/icons/standalone/theme colors); `icons.apple`
+// wires the 180x180 apple-touch-icon (`public/icons/apple-touch-icon.png`) — iOS
+// ignores the manifest's own icon list for "Add to Home Screen" and only reads
+// this <link rel="apple-touch-icon">. `theme-color` itself lives in the
+// `viewport` export below, not here (Next.js 15 App Router convention).
+export const metadata: Metadata = {
   title: AI_NAME,
-  description: AI_NAME,
+  description: AI_DESCRIPTION,
+  manifest: "/manifest.json",
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
+};
+
+// Prism Gold (`--primary` / DESIGN.md §2) — matches manifest.json's
+// `theme_color` so the browser chrome/OS status bar tint agrees with the
+// installed PWA icon regardless of which surface the user launched from.
+export const viewport: Viewport = {
+  themeColor: "#B86A4B",
 };
 
 export const dynamic = "force-dynamic";

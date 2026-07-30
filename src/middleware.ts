@@ -46,6 +46,7 @@ export const config = {
     "/reporting/:path*",
     "/api/chat:path*",
     "/api/images:path*",
+    "/api/speech:path*",
     "/chat/:path*",
     "/admin/:path*",
   ],

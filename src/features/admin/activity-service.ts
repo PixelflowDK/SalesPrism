@@ -236,7 +236,9 @@ export const GetPerUserActivity = async (
   return { status: "OK", response: rows };
 };
 
-const csvEscape = (value: string | number | null): string => {
+// Exported (was module-private) so it can be unit-tested directly — no
+// behavior change. See activity-service.test.ts.
+export const csvEscape = (value: string | number | null): string => {
   const str = value === null ? "" : String(value);
   if (/[",\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;

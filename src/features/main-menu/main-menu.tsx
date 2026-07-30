@@ -19,6 +19,7 @@ import {
   VenetianMask,
 } from "lucide-react";
 import { getCurrentUser } from "../auth-page/helpers";
+import { HelpMenuButton } from "./help-menu-button";
 import { MenuLink } from "./menu-link";
 import { UserProfile } from "./user-profile";
 
@@ -115,6 +116,10 @@ export const MainMenu = async () => {
           )}
         </MenuItemContainer>
         <MenuItemContainer className="border-t border-border pt-2">
+          {/* Stage 5c, SAD §18 Phase F — persistent Help slide-over, reachable from every authenticated page. */}
+          <MenuItem tooltip="Help" asChild>
+            <HelpMenuButton />
+          </MenuItem>
           <MenuItem tooltip="Profile">
             <UserProfile />
           </MenuItem>

@@ -19,10 +19,12 @@ import { ImageInput } from "@/features/ui/chat/chat-input-area/image-input";
 import { Microphone } from "@/features/ui/chat/chat-input-area/microphone";
 import { StopChat } from "@/features/ui/chat/chat-input-area/stop-chat";
 import { SubmitChat } from "@/features/ui/chat/chat-input-area/submit-chat";
-import React, { useRef } from "react";
+import { starterPromptStore } from "@/features/onboarding/starter-prompt-store";
+import React, { useEffect, useRef } from "react";
 import { chatStore, useChat } from "../chat-store";
 import { fileStore, useFileStore } from "./file/file-store";
 import { PromptSlider } from "./prompt/prompt-slider";
+import { useSpeechAvailability } from "./speech/speech-availability-context";
 import {
   speechToTextStore,
   useSpeechToText,
@@ -37,10 +39,23 @@ export const ChatInput = () => {
   const { uploadButtonLabel } = useFileStore();
   const { isPlaying } = useTextToSpeech();
   const { isMicrophoneReady } = useSpeechToText();
+  const speechAvailable = useSpeechAvailability();
   const { rows } = useChatInputDynamicHeight();
 
   const submitButton = React.useRef<HTMLButtonElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+
+  // Onboarding step 3 (Stage 5c, SAD §18 Phase F) — a starter prompt "deep
+  // links" into a brand new chat by creating the thread (CreateChatAndRedirect)
+  // and stashing the prompt text in an in-memory store; this consumes it
+  // exactly once on the fresh thread's first mount. See starter-prompt-store.ts.
+  useEffect(() => {
+    const pending = starterPromptStore.consume();
+    if (pending) {
+      chatStore.updateInput(pending);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submit = () => {
     if (formRef.current) {
@@ -92,6 +107,7 @@ export const ChatInput = () => {
             isPlaying={isPlaying}
             stopPlaying={() => textToSpeechStore.stopPlaying()}
             isMicrophoneReady={isMicrophoneReady}
+            isAvailable={speechAvailable}
           />
           {loading === "loading" ? (
             <StopChat stop={() => chatStore.stopGeneratingMessages()} />

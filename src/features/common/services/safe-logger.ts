@@ -43,6 +43,12 @@ export type SafeLogFields = Partial<{
   eventType: string;
   /** A stable, developer-defined error code — never an interpolated Error/exception message. */
   errorCode: string;
+  /** Model-router (SAD §18 Phase F) classified query complexity — "low" | "medium" | "high", never prompt text. */
+  complexity: string;
+  /** Model-router deployment name actually used to serve the request — a config value, never prompt/response text. */
+  deploymentUsed: string;
+  /** Total tokens (prompt + completion) reported by the Vercel AI SDK's `onFinish` usage — a count, never token content. */
+  tokensUsed: number;
 }>;
 
 const SAFE_FIELD_KEYS: Array<keyof SafeLogFields> = [
@@ -55,6 +61,9 @@ const SAFE_FIELD_KEYS: Array<keyof SafeLogFields> = [
   "durationMs",
   "eventType",
   "errorCode",
+  "complexity",
+  "deploymentUsed",
+  "tokensUsed",
 ];
 
 const sanitizeFields = (fields?: SafeLogFields): Record<string, unknown> => {

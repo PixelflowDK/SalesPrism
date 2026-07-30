@@ -96,5 +96,20 @@ export const createSearchDocumentsTool = (props: {
  * marker it's instructed (system prompt + tool description) to never treat
  * as executable, not to alter the citable content itself.
  */
-const wrapAsDocumentEvidence = (pageContent: string): string =>
-  `<document-evidence>${pageContent}</document-evidence>`;
+// Exported (was module-private) so it can be unit-tested directly — no
+// behavior change. See rag-tool.test.ts.
+export const wrapAsDocumentEvidence = (pageContent: string): string =>
+  `<document-evidence>${neutralizeEvidenceDelimiters(pageContent)}</document-evidence>`;
+
+/**
+ * Structural half of the prompt-injection defence.
+ *
+ * Without this, a chunk containing a literal `</document-evidence>` closes the
+ * boundary early, so everything after it reads to the model as trusted text
+ * outside the untrusted-data envelope. Neutralising the delimiter (rather than
+ * dropping it) keeps the chunk citable and its meaning intact while making the
+ * envelope non-forgeable. Both opening and closing forms are handled so a chunk
+ * cannot fabricate a nested envelope either.
+ */
+export const neutralizeEvidenceDelimiters = (pageContent: string): string =>
+  pageContent.replace(/<(\/?)document-evidence>/gi, "&lt;$1document-evidence&gt;");

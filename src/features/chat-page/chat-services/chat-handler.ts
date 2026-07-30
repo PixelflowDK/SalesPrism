@@ -3,7 +3,6 @@ import "server-only";
 
 import { RecordPromptEvent } from "@/features/admin/activity-service";
 import { getCurrentUser, userHashedId } from "@/features/auth-page/helpers";
-import { getChatModel } from "@/features/common/services/azure-ai";
 import { newRequestId, safeLog } from "@/features/common/services/safe-logger";
 import {
   buildSalesCoachSystemPrompt,
@@ -15,6 +14,7 @@ import { runCustomerExtraction } from "@/features/sales-coach/extraction-service
 import { detectCoachingContext, findMentionedCustomerName } from "@/features/sales-coach/intent-detection";
 import { createMeetingPrepTool } from "@/features/sales-coach/meeting-prep-tool";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
+import { GetTenantTheme, PlatformTier } from "@/features/theme/tenant-theme";
 import { CHAT_DEFAULT_SYSTEM_PROMPT, AI_NAME } from "@/features/theme/theme-config";
 import { stepCountIs, streamText, type ModelMessage } from "ai";
 import { buildSystemPrompt, mapChatMessagesToModelMessages } from "./chat-message-mapper";
@@ -23,6 +23,7 @@ import {
   CreateChatMessage,
   FindTopChatMessagesForCurrentUser,
 } from "./chat-message-service";
+import { routeChatModel } from "./model-router";
 import { createSearchDocumentsTool } from "./rag-tool";
 import { EnsureChatThreadOperation, UpsertChatThread } from "./chat-thread-service";
 import { ChatThreadModel, UserPrompt } from "./models";
@@ -72,6 +73,15 @@ export const ChatAPIEntry = async (
   ]);
 
   const ragToolAvailable = docs.length > 0;
+
+  // Model-router (SAD §18 Phase F / ADR-001) — tenant tier gates escalation
+  // (see model-router.ts `selectDeployment` doc-comment). Fails OPEN to
+  // `null` (unknown tier, full routing allowed) on a Cosmos hiccup, same
+  // fail-open convention as `getRequestTenantTheme` in app/layout.tsx — a
+  // TenantTheme lookup failure must never block the chat response.
+  const tenantTierResponse = await GetTenantTheme(tenantSlug);
+  const tenantTier: PlatformTier | null =
+    tenantTierResponse.status === "OK" ? tenantTierResponse.response.tier : null;
 
   await CreateChatMessage({
     name: user.name,
@@ -144,8 +154,15 @@ export const ChatAPIEntry = async (
   const meetingPrepAvailable = effectiveContext === "meeting-prep";
   const anyToolAvailable = ragToolAvailable || meetingPrepAvailable;
 
+  const routedModel = await routeChatModel({
+    message: props.message,
+    tier: tenantTier,
+    requestId,
+    hasDocuments: ragToolAvailable,
+  });
+
   const result = streamText({
-    model: getChatModel(),
+    model: routedModel.model,
     system,
     messages,
     abortSignal: signal,
@@ -189,6 +206,16 @@ export const ChatAPIEntry = async (
         promptLength: props.message.length,
         tokensUsed: event.totalUsage.totalTokens,
         modelTier: process.env.PLATFORM_TIER || "smb",
+      });
+
+      // Model-router per-request log (SAD §18 Phase F) — codes/enums/counts
+      // only, per safe-logger.ts's allow-list; tokensUsed is only known once
+      // the stream finishes, hence logging here rather than at selection time.
+      safeLog.info("chat.model-router.usage", {
+        requestId,
+        complexity: routedModel.complexity,
+        deploymentUsed: routedModel.deploymentName,
+        tokensUsed: event.totalUsage.totalTokens,
       });
 
       // F-03/F-04 — fire-and-forget customer/persona extraction. Never

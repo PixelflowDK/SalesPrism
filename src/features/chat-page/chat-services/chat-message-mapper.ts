@@ -35,10 +35,27 @@ export const mapChatMessagesToModelMessages = (
  * boundary for "chat with your files" retrieval — it MUST NOT be widened.
  * Preserved byte-for-byte from the pre-migration `ChatApiRAG` implementation.
  */
+/**
+ * OData string literals escape a single quote by doubling it. Without this,
+ * a value containing `'` terminates its literal early and the remainder is
+ * parsed as filter syntax — e.g. `a' or user eq 'someone-else` widens an AND
+ * into an OR and breaks the per-user/per-thread retrieval boundary.
+ *
+ * Today both inputs are server-controlled (`userId` is a SHA-256 hex hash,
+ * `chatThreadId` is a Cosmos-fetched thread id), so this is defence in depth
+ * rather than a live exploit — but this function IS the RAG authorization
+ * boundary, and a future caller passing a client-supplied id would otherwise
+ * turn it into a cross-user data leak. Never interpolate raw values here.
+ */
+const escapeODataLiteral = (value: string): string => value.replace(/'/g, "''");
+
 export const buildDocumentSearchFilter = (
   userId: string,
   chatThreadId: string
-): string => `user eq '${userId}' and chatThreadId eq '${chatThreadId}'`;
+): string =>
+  `user eq '${escapeODataLiteral(userId)}' and chatThreadId eq '${escapeODataLiteral(
+    chatThreadId
+  )}'`;
 
 /**
  * Codex review #1 finding 5 (HIGH) — prompt-injection boundary.

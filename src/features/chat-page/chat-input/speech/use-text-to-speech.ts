@@ -3,11 +3,10 @@ import {
   AudioConfig,
   ResultReason,
   SpeakerAudioDestination,
-  SpeechConfig,
   SpeechSynthesizer,
 } from "microsoft-cognitiveservices-speech-sdk";
 import { proxy, useSnapshot } from "valtio";
-import { GetSpeechToken } from "./speech-service";
+import { buildSpeechConfig, GetSpeechToken } from "./speech-service";
 import { speechToTextStore } from "./use-speech-to-text";
 
 let player: SpeakerAudioDestination | undefined = undefined;
@@ -34,10 +33,7 @@ class TextToSpeech {
       return;
     }
 
-    const speechConfig = SpeechConfig.fromAuthorizationToken(
-      tokenObj.token,
-      tokenObj.region
-    );
+    const speechConfig = buildSpeechConfig(tokenObj);
 
     player = new SpeakerAudioDestination();
 
