@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13201143119417378953"
+      "templateHash": "3702199605501103037"
     }
   },
   "parameters": {
@@ -23,12 +23,17 @@
     },
     "integrationSubnetId": {
       "type": "string"
+    },
+    "appInsightsInstrumentationKey": {
+      "type": "string"
+    },
+    "appInsightsConnectionString": {
+      "type": "string"
     }
   },
   "variables": {
     "planName": "[format('plan-azurechat-{0}', parameters('customerSlug'))]",
-    "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]",
-    "appInsightsName": "[format('appi-azurechat-{0}', parameters('customerSlug'))]"
+    "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]"
   },
   "resources": [
     {
@@ -43,18 +48,6 @@
       },
       "properties": {
         "reserved": true
-      }
-    },
-    {
-      "type": "Microsoft.Insights/components",
-      "apiVersion": "2020-02-02",
-      "name": "[variables('appInsightsName')]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "kind": "web",
-      "properties": {
-        "Application_Type": "web",
-        "RetentionInDays": 90
       }
     },
     {
@@ -104,18 +97,17 @@
             },
             {
               "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
-              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').InstrumentationKey]"
+              "value": "[parameters('appInsightsInstrumentationKey')]"
             },
             {
               "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
-              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+              "value": "[parameters('appInsightsConnectionString')]"
             }
           ]
         },
         "virtualNetworkSubnetId": "[parameters('integrationSubnetId')]"
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
         "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]"
       ]
     }

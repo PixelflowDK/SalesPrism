@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "11334429613543943763"
+      "templateHash": "16307673743168702671"
     }
   },
   "parameters": {
@@ -25,11 +25,68 @@
         "professional",
         "enterprise"
       ]
+    },
+    "aiModelSkuName": {
+      "type": "string",
+      "defaultValue": "DataZoneStandard",
+      "allowedValues": [
+        "DataZoneStandard"
+      ],
+      "metadata": {
+        "description": "Azure OpenAI deployment SKU — GDPR R2: DataZoneStandard only, never GlobalStandard."
+      }
+    },
+    "chatModelNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the tier-mapped chat model name. Leave empty to use the ADR-001 tier default."
+      }
+    },
+    "chatModelVersionOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Override the tier-mapped chat model version. Leave empty to use the ADR-001 tier default."
+      }
+    },
+    "chatModelCapacityOverride": {
+      "type": "int",
+      "defaultValue": 0,
+      "metadata": {
+        "description": "Override the tier-mapped chat model capacity (1K TPM units). Leave 0 to use the ADR-001 tier default."
+      }
+    },
+    "embeddingModelName": {
+      "type": "string",
+      "defaultValue": "text-embedding-3-small",
+      "metadata": {
+        "description": "Embedding model name — GA per ADR-001 (text-embedding-3-small until the -large quota grant lands)."
+      }
+    },
+    "embeddingModelVersion": {
+      "type": "string",
+      "defaultValue": "1",
+      "metadata": {
+        "description": "Embedding model version."
+      }
+    },
+    "embeddingModelCapacity": {
+      "type": "int",
+      "defaultValue": 30,
+      "metadata": {
+        "description": "Embedding model deployment capacity (1K TPM units)."
+      }
     }
   },
   "variables": {
     "accountName": "[format('oai-azurechat-{0}', parameters('customerSlug'))]",
-    "selectedModel": "[if(equals(parameters('aiModelTier'), 'standard'), createObject('name', 'gpt-4o-mini', 'version', '2024-07-18', 'capacity', 30), if(equals(parameters('aiModelTier'), 'professional'), createObject('name', 'gpt-4-1', 'version', '2025-04-14', 'capacity', 20), createObject('name', 'gpt-4o', 'version', '2024-11-20', 'capacity', 10)))]"
+    "tierModel": "[if(equals(parameters('aiModelTier'), 'standard'), createObject('name', 'gpt-5.4-mini', 'version', '2026-03-17', 'capacity', 30), if(equals(parameters('aiModelTier'), 'professional'), createObject('name', 'gpt-5.4', 'version', '2026-03-05', 'capacity', 20), createObject('name', 'gpt-5.5', 'version', '2026-04-24', 'capacity', 10)))]",
+    "selectedChatModel": {
+      "name": "[if(empty(parameters('chatModelNameOverride')), variables('tierModel').name, parameters('chatModelNameOverride'))]",
+      "version": "[if(empty(parameters('chatModelVersionOverride')), variables('tierModel').version, parameters('chatModelVersionOverride'))]",
+      "capacity": "[if(equals(parameters('chatModelCapacityOverride'), 0), variables('tierModel').capacity, parameters('chatModelCapacityOverride'))]"
+    }
   },
   "resources": [
     {
@@ -50,20 +107,40 @@
     {
       "type": "Microsoft.CognitiveServices/accounts/deployments",
       "apiVersion": "2024-04-01-preview",
-      "name": "[format('{0}/{1}', variables('accountName'), variables('selectedModel').name)]",
+      "name": "[format('{0}/{1}', variables('accountName'), variables('selectedChatModel').name)]",
       "sku": {
-        "name": "DataZoneStandard",
-        "capacity": "[variables('selectedModel').capacity]"
+        "name": "[parameters('aiModelSkuName')]",
+        "capacity": "[variables('selectedChatModel').capacity]"
       },
       "properties": {
         "model": {
           "format": "OpenAI",
-          "name": "[variables('selectedModel').name]",
-          "version": "[variables('selectedModel').version]"
+          "name": "[variables('selectedChatModel').name]",
+          "version": "[variables('selectedChatModel').version]"
         }
       },
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[format('{0}/{1}', variables('accountName'), parameters('embeddingModelName'))]",
+      "sku": {
+        "name": "[parameters('aiModelSkuName')]",
+        "capacity": "[parameters('embeddingModelCapacity')]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('embeddingModelName')]",
+          "version": "[parameters('embeddingModelVersion')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('accountName'), variables('selectedChatModel').name)]"
       ]
     }
   ],
@@ -75,6 +152,14 @@
     "openAiEndpoint": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('accountName')), '2024-04-01-preview').endpoint]"
+    },
+    "chatModelDeploymentName": {
+      "type": "string",
+      "value": "[variables('selectedChatModel').name]"
+    },
+    "embeddingModelDeploymentName": {
+      "type": "string",
+      "value": "[parameters('embeddingModelName')]"
     }
   }
 }

@@ -12,7 +12,8 @@ param companyName string
 @allowed(['northeurope', 'westeurope'])
 param azureRegion string = 'northeurope'
 
-@allowed(['B3', 'P1v3'])
+@allowed(['B1', 'B3', 'P1v3'])
+@description('App Service Plan SKU. B1 is validation-environment only — never use for a production customer.')
 param appServiceSku string = 'B3'
 
 @allowed(['standard', 'professional', 'enterprise'])
@@ -22,6 +23,43 @@ param aiModelTier string = 'standard'
 param aiSearchSku string = 'basic'
 
 param enableZeroDataRetention bool = false
+
+@allowed(['production', 'validation'])
+@description('Deployment environment tag. "validation" is for internal test stacks only — never a paying customer.')
+param environmentTag string = 'production'
+
+// ---------------------------------------------------------------------------
+// AI model deployment overrides — ADR-001 (2026-07-30) baseline.
+// Leave at defaults for production customers; the tier mapping in modules/openai.bicep
+// already reflects ADR-001. Overrides exist so the validation environment (and any future
+// quota-driven adjustment) can deviate without editing module source.
+// ---------------------------------------------------------------------------
+@allowed(['DataZoneStandard'])
+@description('Azure OpenAI deployment SKU — GDPR R2: DataZoneStandard only, never GlobalStandard.')
+param aiModelSkuName string = 'DataZoneStandard'
+
+@description('Override the tier-mapped chat model name. Leave empty to use the ADR-001 tier default.')
+param chatModelNameOverride string = ''
+
+@description('Override the tier-mapped chat model version. Leave empty to use the ADR-001 tier default.')
+param chatModelVersionOverride string = ''
+
+@description('Override the tier-mapped chat model capacity (1K TPM units). Leave 0 to use the ADR-001 tier default.')
+param chatModelCapacityOverride int = 0
+
+@description('Embedding model name — GA per ADR-001 (text-embedding-3-small until the -large quota grant lands).')
+param embeddingModelName string = 'text-embedding-3-small'
+
+@description('Embedding model version.')
+param embeddingModelVersion string = '1'
+
+@description('Embedding model deployment capacity (1K TPM units).')
+param embeddingModelCapacity int = 30
+
+@minValue(30)
+@maxValue(730)
+@description('Log Analytics / Application Insights retention in days (SAD §31.6). GDPR-minimum is 30.')
+param logRetentionDays int = 30
 
 // ---------------------------------------------------------------------------
 // Naming — follow SAD Section 25 conventions exactly.
@@ -45,7 +83,7 @@ var names = {
 // ---------------------------------------------------------------------------
 var tags = {
   customer:     customerSlug
-  environment:  'production'
+  environment:  environmentTag
   'managed-by': 'sales-prism-provisioning'
   'model-tier': aiModelTier
 }
@@ -70,10 +108,17 @@ module openAiModule 'modules/openai.bicep' = {
   scope: resourceGroup(names.resourceGroup)
   dependsOn: [rgModule]
   params: {
-    customerSlug: customerSlug
-    location:     azureRegion
-    tags:         tags
-    aiModelTier:  aiModelTier
+    customerSlug:               customerSlug
+    location:                   azureRegion
+    tags:                       tags
+    aiModelTier:                aiModelTier
+    aiModelSkuName:             aiModelSkuName
+    chatModelNameOverride:      chatModelNameOverride
+    chatModelVersionOverride:   chatModelVersionOverride
+    chatModelCapacityOverride:  chatModelCapacityOverride
+    embeddingModelName:         embeddingModelName
+    embeddingModelVersion:      embeddingModelVersion
+    embeddingModelCapacity:     embeddingModelCapacity
   }
 }
 
@@ -166,23 +211,40 @@ module privateDnsModule 'modules/private-dns-zones.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// 5. App Service (depends on networking for integration subnet)
+// 5. Observability — Log Analytics + Application Insights (SAD §31.6, per-customer isolation)
 // ---------------------------------------------------------------------------
-module appServiceModule 'modules/app-service.bicep' = {
-  name: 'deploy-appservice-${customerSlug}'
+module observabilityModule 'modules/observability.bicep' = {
+  name: 'deploy-observability-${customerSlug}'
   scope: resourceGroup(names.resourceGroup)
-  dependsOn: [networkingModule]
+  dependsOn: [rgModule]
   params: {
-    customerSlug:        customerSlug
-    location:            azureRegion
-    tags:                tags
-    appServicePlanSku:   appServiceSku
-    integrationSubnetId: networkingModule.outputs.integrationSubnetId
+    customerSlug:  customerSlug
+    location:      azureRegion
+    tags:          tags
+    retentionDays: logRetentionDays
   }
 }
 
 // ---------------------------------------------------------------------------
-// 6. RBAC — managed identity role assignments (depends on App Service + all services)
+// 6. App Service (depends on networking for integration subnet, observability for telemetry)
+// ---------------------------------------------------------------------------
+module appServiceModule 'modules/app-service.bicep' = {
+  name: 'deploy-appservice-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [networkingModule, observabilityModule]
+  params: {
+    customerSlug:                  customerSlug
+    location:                      azureRegion
+    tags:                          tags
+    appServicePlanSku:             appServiceSku
+    integrationSubnetId:           networkingModule.outputs.integrationSubnetId
+    appInsightsInstrumentationKey: observabilityModule.outputs.appInsightsInstrumentationKey
+    appInsightsConnectionString:   observabilityModule.outputs.appInsightsConnectionString
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. RBAC — managed identity role assignments (depends on App Service + all services)
 // ---------------------------------------------------------------------------
 module rbacModule 'modules/rbac.bicep' = {
   name: 'deploy-rbac-${customerSlug}'
@@ -196,7 +258,6 @@ module rbacModule 'modules/rbac.bicep' = {
     keyVaultId:              keyVaultModule.outputs.keyVaultId
     storageId:               storageModule.outputs.storageId
     documentIntelligenceId:  docIntelligenceModule.outputs.documentIntelligenceId
-    customerSlug:            customerSlug
   }
 }
 
@@ -206,8 +267,12 @@ module rbacModule 'modules/rbac.bicep' = {
 output resourceGroupName      string = names.resourceGroup
 output appServiceHostname     string = appServiceModule.outputs.appServiceHostname
 output openAiEndpoint         string = openAiModule.outputs.openAiEndpoint
+output chatModelDeploymentName string = openAiModule.outputs.chatModelDeploymentName
+output embeddingModelDeploymentName string = openAiModule.outputs.embeddingModelDeploymentName
 output aiSearchEndpoint       string = aiSearchModule.outputs.aiSearchEndpoint
 output cosmosEndpoint         string = cosmosModule.outputs.cosmosEndpoint
 output keyVaultUri            string = keyVaultModule.outputs.keyVaultUri
 output storageName            string = storageModule.outputs.storageName
 output documentIntelligenceEndpoint string = docIntelligenceModule.outputs.documentIntelligenceEndpoint
+output logAnalyticsWorkspaceId string = observabilityModule.outputs.logAnalyticsWorkspaceId
+output appInsightsId           string = observabilityModule.outputs.appInsightsId

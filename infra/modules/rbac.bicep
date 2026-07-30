@@ -8,7 +8,6 @@ param cosmosId string
 param keyVaultId string
 param storageId string
 param documentIntelligenceId string
-param customerSlug string
 
 // Cognitive Services OpenAI User
 var roleOpenAiUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
