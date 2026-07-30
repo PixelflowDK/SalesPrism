@@ -4,6 +4,7 @@ import { Citation } from "./citation";
 import { CodeBlock } from "./code-block";
 import { citationConfig } from "./config";
 import { MarkdownProvider } from "./markdown-context";
+import { MeetingBriefBlock } from "./meeting-brief-tag";
 import { Paragraph } from "./paragraph";
 
 interface Props {
@@ -24,7 +25,7 @@ export const Markdown: FC<Props> = (props) => {
   const WithContext = () => (
     <MarkdownProvider onCitationClick={props.onCitationClick}>
       {Markdoc.renderers.react(content, React, {
-        components: { Citation, Paragraph, CodeBlock },
+        components: { Citation, Paragraph, CodeBlock, MeetingBriefBlock },
       })}
     </MarkdownProvider>
   );

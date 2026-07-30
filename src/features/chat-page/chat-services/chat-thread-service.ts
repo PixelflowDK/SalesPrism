@@ -299,6 +299,7 @@ export const CreateChatThread = async (): Promise<
       personaMessage: "",
       personaMessageTitle: CHAT_DEFAULT_PERSONA,
       extension: [],
+      coachingContext: null,
     };
 
     const { resource } = await HistoryContainer().items.create<ChatThreadModel>(

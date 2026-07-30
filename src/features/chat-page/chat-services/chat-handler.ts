@@ -5,6 +5,15 @@ import { RecordPromptEvent } from "@/features/admin/activity-service";
 import { getCurrentUser, userHashedId } from "@/features/auth-page/helpers";
 import { getChatModel } from "@/features/common/services/azure-ai";
 import { newRequestId, safeLog } from "@/features/common/services/safe-logger";
+import {
+  buildSalesCoachSystemPrompt,
+  CustomerContextSummary,
+  GetActiveModules,
+} from "@/features/sales-coach/context-injection";
+import { FindCustomerEntitiesForOwner } from "@/features/sales-coach/customer-entity-service";
+import { runCustomerExtraction } from "@/features/sales-coach/extraction-service";
+import { detectCoachingContext, findMentionedCustomerName } from "@/features/sales-coach/intent-detection";
+import { createMeetingPrepTool } from "@/features/sales-coach/meeting-prep-tool";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 import { CHAT_DEFAULT_SYSTEM_PROMPT, AI_NAME } from "@/features/theme/theme-config";
 import { stepCountIs, streamText, type ModelMessage } from "ai";
@@ -15,7 +24,7 @@ import {
   FindTopChatMessagesForCurrentUser,
 } from "./chat-message-service";
 import { createSearchDocumentsTool } from "./rag-tool";
-import { EnsureChatThreadOperation } from "./chat-thread-service";
+import { EnsureChatThreadOperation, UpsertChatThread } from "./chat-thread-service";
 import { ChatThreadModel, UserPrompt } from "./models";
 
 /**
@@ -72,26 +81,91 @@ export const ChatAPIEntry = async (
     multiModalImage: props.multimodalImage,
   });
 
-  const system = buildSystemPrompt(
+  // Sales Coach 360 F-01/F-02 (Stage 5b) — per-message keyword classifier,
+  // sticky across turns via `ChatThreadModel.coachingContext` (see its
+  // doc-comment in ./models.ts) so the guided meeting-prep/coaching flow
+  // survives follow-up messages that don't repeat the trigger phrase.
+  const detectedContext = detectCoachingContext(props.message);
+  const effectiveContext = detectedContext ?? currentChatThread.coachingContext ?? null;
+
+  if (detectedContext && detectedContext !== currentChatThread.coachingContext) {
+    await UpsertChatThread({ ...currentChatThread, coachingContext: detectedContext });
+  }
+
+  const [activeModules, customerEntitiesResponse] = await Promise.all([
+    GetActiveModules(tenantSlug),
+    FindCustomerEntitiesForOwner(tenantSlug, userId),
+  ]);
+
+  const knownCustomers =
+    customerEntitiesResponse.status === "OK" ? customerEntitiesResponse.response : [];
+  const mentionedCustomerName = findMentionedCustomerName(
+    props.message,
+    knownCustomers.map((c) => c.customerName)
+  );
+  const matchedCustomer = mentionedCustomerName
+    ? knownCustomers.find((c) => c.customerName === mentionedCustomerName)
+    : undefined;
+
+  // F-03 — "kunde-kontekst injiceres proaktivt i mødeforberedelse": when the
+  // seller mentions a customer we already have intel on, that intel is
+  // injected into the system prompt instead of re-asking for it.
+  const customerContext: CustomerContextSummary | null = matchedCustomer
+    ? {
+        customerName: matchedCustomer.customerName,
+        knownChallenges: matchedCustomer.knownChallenges,
+        valueAreas: matchedCustomer.valueAreas,
+        contacts: matchedCustomer.contacts.map((c) => ({
+          name: c.name,
+          title: c.title,
+          personaType: c.personaType,
+          primaryValueArea: c.primaryValueArea,
+        })),
+      }
+    : null;
+
+  const salesCoachSystem = buildSalesCoachSystemPrompt(activeModules, {
+    assistantName: AI_NAME,
+    coachingContext: effectiveContext,
+    customerContext,
+  });
+
+  const system = `${buildSystemPrompt(
     CHAT_DEFAULT_SYSTEM_PROMPT,
     currentChatThread.personaMessage,
     ragToolAvailable
-  );
+  )}\n\n${salesCoachSystem}`;
 
   const messages: ModelMessage[] = [
     ...mapChatMessagesToModelMessages(history),
     _buildUserMessage(props),
   ];
 
+  const meetingPrepAvailable = effectiveContext === "meeting-prep";
+  const anyToolAvailable = ragToolAvailable || meetingPrepAvailable;
+
   const result = streamText({
     model: getChatModel(),
     system,
     messages,
     abortSignal: signal,
-    tools: ragToolAvailable
-      ? { searchDocuments: createSearchDocumentsTool({ userId, chatThreadId: currentChatThread.id }) }
+    tools: anyToolAvailable
+      ? {
+          ...(ragToolAvailable
+            ? { searchDocuments: createSearchDocumentsTool({ userId, chatThreadId: currentChatThread.id }) }
+            : {}),
+          ...(meetingPrepAvailable
+            ? {
+                meetingPrep: createMeetingPrepTool({
+                  tenantSlug,
+                  ownerHashedId: userId,
+                  chatThreadId: currentChatThread.id,
+                }),
+              }
+            : {}),
+        }
       : undefined,
-    stopWhen: ragToolAvailable ? stepCountIs(MAX_TOOL_STEPS) : undefined,
+    stopWhen: anyToolAvailable ? stepCountIs(MAX_TOOL_STEPS) : undefined,
     onFinish: async (event) => {
       // Thread title auto-update stays client-side (chat-store.tsx), invoked
       // directly against the `UpdateChatTitle` Server Action after the stream
@@ -115,6 +189,17 @@ export const ChatAPIEntry = async (
         promptLength: props.message.length,
         tokensUsed: event.totalUsage.totalTokens,
         modelTier: process.env.PLATFORM_TIER || "smb",
+      });
+
+      // F-03/F-04 — fire-and-forget customer/persona extraction. Never
+      // awaited: `runCustomerExtraction` catches every failure internally
+      // and reports only via `safeLog` (no prompt/response text), so it can
+      // never delay or break the chat response above.
+      void runCustomerExtraction({
+        tenantSlug,
+        ownerHashedId: userId,
+        userMessage: props.message,
+        assistantMessage: event.text,
       });
     },
   });

@@ -9,11 +9,13 @@ import {
 } from "@/ui/menu";
 import {
   Book,
+  FileText,
   Home,
   MessageCircle,
   PocketKnife,
   Settings,
   Sheet,
+  Users,
   VenetianMask,
 } from "lucide-react";
 import { getCurrentUser } from "../auth-page/helpers";
@@ -61,6 +63,20 @@ export const MainMenu = async () => {
             >
               <VenetianMask {...menuIconProps} />
               <span className="text-sm">Persona</span>
+            </MenuLink>
+          </MenuItem>
+          {/* Sales Coach 360 F-03/F-04 — customer intelligence + persona profiles, visible to every user (per-seller data, not admin-only). */}
+          <MenuItem tooltip="Customers" asChild>
+            <MenuLink href="/customers" ariaLabel="Go to the Customers page">
+              <Users {...menuIconProps} />
+              <span className="text-sm">Customers</span>
+            </MenuLink>
+          </MenuItem>
+          {/* Sales Coach 360 F-01 — saved, reopenable meeting-prep briefs. */}
+          <MenuItem tooltip="Briefs" asChild>
+            <MenuLink href="/briefs" ariaLabel="Go to the Meeting Briefs page">
+              <FileText {...menuIconProps} />
+              <span className="text-sm">Briefs</span>
             </MenuLink>
           </MenuItem>
           <MenuItem tooltip="Extensions" asChild>

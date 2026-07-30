@@ -31,6 +31,16 @@ export interface ChatThreadModel {
   personaMessageTitle: string;
   extension: string[];
   type: typeof CHAT_THREAD_ATTRIBUTE;
+  /**
+   * Sales Coach 360 F-01/F-02 (Stage 5b) — sticky guided-flow context for
+   * this thread. Set by `chat-handler.ts`'s per-message keyword classifier
+   * (`intent-detection.ts`) and persisted here so the meeting-prep /
+   * conversation-coaching system-prompt injection and the `meetingPrep`
+   * tool stay active across multiple turns without the seller re-typing the
+   * trigger phrase every message. `undefined` on chat threads created
+   * before this field existed — treated identically to `null`.
+   */
+  coachingContext?: "meeting-prep" | "conversation-coaching" | null;
 }
 
 export interface UserPrompt {
