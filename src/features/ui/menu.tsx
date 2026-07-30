@@ -15,20 +15,22 @@ const Menu = React.forwardRef<
 ));
 Menu.displayName = "Menu";
 
+// DESIGN.md §5.1 / §6.1 — fixed 200px, always visible, never collapsible.
 const MenuBar = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (
-  <div
+  <nav
     ref={ref}
+    aria-label="Primary"
     className={cn(
-      "bg-background z-10 p-2 w-16 flex flex-col justify-between h-full items-stretch border-r",
+      "bg-sidebar z-10 p-3 w-[200px] shrink-0 flex flex-col justify-between h-full items-stretch border-r border-border",
       className
     )}
     {...props}
   >
     <TooltipProvider>{props.children}</TooltipProvider>
-  </div>
+  </nav>
 ));
 MenuBar.displayName = "MenuBar";
 
@@ -40,7 +42,7 @@ const MenuItemContainer = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn(" flex flex-col ", className)} {...props}>
+  <div ref={ref} className={cn("flex flex-col gap-1", className)} {...props}>
     {props.children}
   </div>
 ));
@@ -53,7 +55,7 @@ const MenuItem = React.forwardRef<HTMLButtonElement, AnchorProps>(
         title={props.tooltip}
         variant={variant}
         {...props}
-        className={cn(ButtonLinkVariant)}
+        className={cn(ButtonLinkVariant, className)}
         ref={ref}
       />
     );
@@ -61,9 +63,11 @@ const MenuItem = React.forwardRef<HTMLButtonElement, AnchorProps>(
 );
 MenuItem.displayName = "MenuItem";
 
+// DESIGN.md §5.1 — sidebar nav icons are 20px.
 const menuIconProps: LucideProps = {
-  size: 24,
+  size: 20,
   strokeWidth: 1.6,
+  "aria-hidden": true,
 };
 
 export { Menu, MenuBar, MenuItem, MenuItemContainer, menuIconProps };

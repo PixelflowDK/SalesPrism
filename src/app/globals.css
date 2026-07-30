@@ -2,50 +2,159 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Coach 360 (Sales Prism) design tokens — DESIGN.md §2.
+ * These are the SMB/Professional standard tokens. Enterprise (whiteLabel)
+ * tenants get a subset of these overridden at runtime via an inline
+ * <style> tag injected by TenantThemeStyle (see src/features/theme/) —
+ * never by editing this file per-tenant.
+ */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 136 80% 29%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
+    /* Brand */
+    --color-primary: #b86a4b;
+    --color-primary-hover: #a05a3d;
+    --color-primary-light: #f5eae5;
+    --color-secondary: #5e6b5b;
+    --color-secondary-hover: #4c584a;
+    --color-tertiary: #258d85;
+    --color-tertiary-light: #e8f3f2;
+    --color-neutral: #807571;
+
+    /* Backgrounds */
+    --color-bg-base: #f7f5f0;
+    --color-bg-surface: #ffffff;
+    --color-bg-sidebar: #fafaf8;
+    --color-bg-ai: #f0ede6;
+    --color-bg-hover: #f0ede6;
+
+    /* Text */
+    --color-text-primary: #20252b;
+    --color-text-secondary: #807571;
+    --color-text-muted: #9ca3af;
+    --color-text-on-primary: #ffffff;
+
+    /* Border */
+    --color-border: #e2e4e0;
+    --color-border-strong: #c8cbc5;
+
+    /* Semantic */
+    --color-success: #1d9e75;
+    --color-warning: #ef9f27;
+    --color-error: #d85a30;
+    --color-info: #378add;
+
+    /* Spectrum rays — data viz only, never brand chrome */
+    --ray-1: #7f77dd;
+    --ray-2: #1d9e75;
+    --ray-3: #378add;
+    --ray-4: #ef9f27;
+    --ray-5: #d85a30;
+    --ray-6: #d4537e;
+    --ray-7: #6b7280;
+
+    /* Radius */
+    --radius-sm: 6px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+    --radius-pill: 100px;
+
+    /* Shadow — reserved for true overlays (dropdowns/modals), never canvas cards */
+    --shadow-none: none;
+    --shadow-sm: 0 1px 2px rgba(32, 37, 43, 0.04);
+    --shadow-md: 0 4px 12px rgba(32, 37, 43, 0.08);
+    --shadow-lg: 0 12px 32px rgba(32, 37, 43, 0.12);
   }
 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 136 80% 42%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9;
+  @media (prefers-color-scheme: dark) {
+    /*
+     * System-preference fallback. Explicit user toggle (next-themes,
+     * attribute="data-theme") always wins via the [data-theme] rules below
+     * since they come later in source order and share specificity.
+     */
+    :root:not([data-theme="light"]) {
+      --color-primary: #d4856a;
+      --color-primary-hover: #e2a186;
+      --color-primary-light: #3a2a22;
+      --color-secondary: #8fa085;
+      --color-secondary-hover: #a3b399;
+      --color-tertiary: #4fbdb3;
+      --color-tertiary-light: #1c3532;
+      --color-neutral: #a69c95;
+
+      --color-bg-base: #111318;
+      --color-bg-surface: #1a1d23;
+      --color-bg-sidebar: #15171c;
+      --color-bg-ai: #2a2320;
+      --color-bg-hover: #22252b;
+
+      --color-text-primary: #f2efea;
+      --color-text-secondary: #a69c95;
+      --color-text-muted: #6b6f76;
+      --color-text-on-primary: #1a1108;
+
+      --color-border: #33302b;
+      --color-border-strong: #4a443d;
+
+      --color-success: #34c38f;
+      --color-warning: #f4b255;
+      --color-error: #e8735a;
+      --color-info: #5aa6e8;
+
+      --ray-1: #9691e5;
+      --ray-2: #3fb68f;
+      --ray-3: #5ca1e6;
+      --ray-4: #f3b454;
+      --ray-5: #e17a55;
+      --ray-6: #dd759a;
+      --ray-7: #868d9a;
+
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.36);
+      --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.48);
+    }
+  }
+
+  [data-theme="dark"] {
+    --color-primary: #d4856a;
+    --color-primary-hover: #e2a186;
+    --color-primary-light: #3a2a22;
+    --color-secondary: #8fa085;
+    --color-secondary-hover: #a3b399;
+    --color-tertiary: #4fbdb3;
+    --color-tertiary-light: #1c3532;
+    --color-neutral: #a69c95;
+
+    --color-bg-base: #111318;
+    --color-bg-surface: #1a1d23;
+    --color-bg-sidebar: #15171c;
+    --color-bg-ai: #2a2320;
+    --color-bg-hover: #22252b;
+
+    --color-text-primary: #f2efea;
+    --color-text-secondary: #a69c95;
+    --color-text-muted: #6b6f76;
+    --color-text-on-primary: #1a1108;
+
+    --color-border: #33302b;
+    --color-border-strong: #4a443d;
+
+    --color-success: #34c38f;
+    --color-warning: #f4b255;
+    --color-error: #e8735a;
+    --color-info: #5aa6e8;
+
+    --ray-1: #9691e5;
+    --ray-2: #3fb68f;
+    --ray-3: #5ca1e6;
+    --ray-4: #f3b454;
+    --ray-5: #e17a55;
+    --ray-6: #dd759a;
+    --ray-7: #868d9a;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.36);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.48);
   }
 }
 
@@ -54,6 +163,34 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-body;
   }
+}
+
+/* DESIGN.md §7.2 — respected globally, including AI Response Block entrance
+   animation and bottom-sheet transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes ai-block-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-ai-block-in {
+  animation: ai-block-in 300ms ease-out;
 }

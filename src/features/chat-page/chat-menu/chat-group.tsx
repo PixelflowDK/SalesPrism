@@ -7,8 +7,10 @@ interface Props extends PropsWithChildren {
 export const ChatGroup = (props: Props) => {
   return (
     <div className="flex flex-col">
-      <div className="text-sm text-muted-foreground p-3">{props.title}</div>
-      <div>{props.children}</div>
+      <div className="font-mono text-xs uppercase tracking-[0.1em] text-muted-foreground px-3 py-2">
+        {props.title}
+      </div>
+      <div className="flex flex-col gap-1">{props.children}</div>
     </div>
   );
 };

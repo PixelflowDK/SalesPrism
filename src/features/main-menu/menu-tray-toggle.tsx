@@ -10,15 +10,18 @@ export const MenuTrayToggle = () => {
   return (
     <MenuItem
       onClick={() => menuStore.toggleMenu()}
-      tooltip="Open and Collapse menu"
+      tooltip="Open and collapse chat history"
+      aria-label="Open and collapse chat history"
     >
       <PanelLeftClose
         {...menuIconProps}
+        aria-hidden={true}
         className={cn(
           "transition-all rotate-180 duration-700",
           isMenuOpen ? "rotate-0" : ""
         )}
       />
+      <span className="text-sm text-muted-foreground">Chat history</span>
     </MenuItem>
   );
 };

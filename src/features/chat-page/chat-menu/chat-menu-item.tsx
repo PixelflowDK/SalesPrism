@@ -31,15 +31,20 @@ export const ChatMenuItem: FC<ChatMenuItemProps> = (props) => {
     chatThread: props.chatThread,
   });
 
+  const isActive = path.startsWith(props.href) && props.href !== "/";
+
   return (
-    <div className="flex group hover:bg-muted pr-3 text-muted-foreground rounded-sm hover:text-muted-foreground">
+    <div
+      className={cn(
+        "flex group pr-3 text-muted-foreground rounded-md border-l-[3px] hover:bg-muted hover:text-foreground",
+        isActive ? "border-primary bg-primary-light" : "border-transparent"
+      )}
+    >
       <Link
         href={props.href}
         className={cn(
-          "flex-1 flex items-center gap-2 p-3 overflow-hidden",
-          path.startsWith(props.href) && props.href !== "/"
-            ? "text-primary"
-            : ""
+          "flex-1 flex items-center gap-2 p-3 overflow-hidden text-sm min-h-[44px]",
+          isActive ? "text-primary font-medium" : ""
         )}
       >
         {props.children}

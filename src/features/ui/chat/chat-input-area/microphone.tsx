@@ -24,8 +24,9 @@ export const Microphone = (props: {
           type="button"
           variant={"ghost"}
           onClick={props.stopPlaying}
+          aria-label="Stop audio playback"
         >
-          <Square size={16} />
+          <Square size={16} aria-hidden="true" />
         </Button>
       ) : (
         <Button
@@ -36,11 +37,13 @@ export const Microphone = (props: {
           onMouseUp={stopRecognition}
           onMouseLeave={stopRecognition}
           className={
-            props.isMicrophoneReady ? "bg-red-400 hover:bg-red-400" : ""
+            props.isMicrophoneReady
+              ? "bg-destructive text-destructive-foreground hover:bg-destructive"
+              : ""
           }
           aria-label="Microphone for speech input"
         >
-          <Mic size={16} />
+          <Mic size={16} aria-hidden="true" />
         </Button>
       )}
     </>

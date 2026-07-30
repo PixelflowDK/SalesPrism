@@ -67,45 +67,77 @@ export const ChatMessageArea = (props: {
       break;
   }
 
-  return (
-    <div className="flex flex-col">
+  const isAssistant = props.role === "assistant";
+  const isToolOrFunction = props.role === "tool" || props.role === "function";
+
+  const header = (
+    <div className="h-7 flex items-center justify-between">
+      <div className="flex gap-3">
+        {profile}
+        <div
+          className={cn(
+            "capitalize items-center flex font-medium",
+            isAssistant && "font-display text-primary",
+            !isAssistant && !isToolOrFunction && "text-foreground",
+            isToolOrFunction && "text-muted-foreground text-sm font-body"
+          )}
+        >
+          {props.profileName}
+        </div>
+      </div>
       <div className="h-7 flex items-center justify-between">
-        <div className="flex gap-3">
-          {profile}
-          <div
-            className={cn(
-              "text-primary capitalize items-center flex",
-              props.role === "function" || props.role === "tool"
-                ? "text-muted-foreground text-sm"
-                : ""
-            )}
-          >
-            {props.profileName}
-          </div>
-        </div>
-        <div className=" h-7 flex items-center justify-between">
-          <div>
-            <Button
-              variant={"ghost"}
-              size={"sm"}
-              title="Copy text"
-              className="justify-right flex"
-              onClick={handleButtonClick}
-            >
-              {isIconChecked ? (
-                <CheckIcon size={16} />
-              ) : (
-                <ClipboardIcon size={16} />
-              )}
-            </Button>
-          </div>
-        </div>
+        <Button
+          variant={"ghost"}
+          size={"sm"}
+          title="Copy text"
+          aria-label="Copy message text"
+          className="justify-right flex"
+          onClick={handleButtonClick}
+        >
+          {isIconChecked ? (
+            <CheckIcon size={16} aria-hidden="true" />
+          ) : (
+            <ClipboardIcon size={16} aria-hidden="true" />
+          )}
+        </Button>
       </div>
-      <div className="flex flex-col gap-2 flex-1 px-10">
-        <div className="prose prose-slate dark:prose-invert whitespace-break-spaces prose-p:leading-relaxed prose-pre:p-0 max-w-none">
-          {props.children}
-        </div>
+    </div>
+  );
+
+  const prose = (
+    <div
+      className={cn(
+        // No `dark:prose-invert` — prose colors are wired to the design
+        // tokens above, which already swap under [data-theme="dark"].
+        "prose max-w-none whitespace-break-spaces prose-p:leading-relaxed prose-pre:p-0",
+        isAssistant &&
+          "prose-headings:font-display prose-headings:text-primary prose-headings:font-bold prose-a:text-primary"
+      )}
+    >
+      {props.children}
+    </div>
+  );
+
+  // DESIGN.md §5.3 — the AI Response Block is the product's signature
+  // component: a structured document card, never a chat bubble. Warm-sand
+  // background, copper left border only, entrance fade-in.
+  if (isAssistant) {
+    return (
+      <div
+        role="article"
+        aria-label={`${props.profileName ?? "Assistant"} response`}
+        className="animate-ai-block-in flex flex-col gap-3 rounded-md border-l-[3px] border-primary bg-ai px-6 py-5"
+      >
+        {header}
+        <div aria-live="polite">{prose}</div>
       </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {header}
+      <div className="flex flex-col gap-2 flex-1 px-10">{prose}</div>
     </div>
   );
 };

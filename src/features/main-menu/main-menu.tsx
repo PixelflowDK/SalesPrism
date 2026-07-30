@@ -1,4 +1,5 @@
 import { MenuTrayToggle } from "@/features/main-menu/menu-tray-toggle";
+import { AI_NAME } from "@/features/theme/theme-config";
 import {
   Menu,
   MenuBar,
@@ -18,6 +19,10 @@ import { getCurrentUser } from "../auth-page/helpers";
 import { MenuLink } from "./menu-link";
 import { UserProfile } from "./user-profile";
 
+// DESIGN.md §5.1 — sidebar structure: wordmark + subtitle, primary nav
+// (icon + label), Recents (chat history tray, rendered separately per
+// route — see (authenticated)/chat/layout.tsx), Settings/profile pinned
+// to the bottom.
 export const MainMenu = async () => {
   const user = await getCurrentUser();
 
@@ -25,45 +30,66 @@ export const MainMenu = async () => {
     <Menu>
       <MenuBar>
         <MenuItemContainer>
+          <div className="px-3 pt-1 pb-3">
+            <p className="font-display text-lg font-bold leading-none text-foreground">
+              {AI_NAME}
+            </p>
+            <p className="mt-1 text-xs uppercase tracking-[0.1em] text-muted-foreground">
+              Expert Workspace
+            </p>
+          </div>
           <MenuItem tooltip="Home" asChild>
             <MenuLink href="/chat" ariaLabel="Go to the Home page">
               <Home {...menuIconProps} />
+              <span className="text-sm">Home</span>
             </MenuLink>
           </MenuItem>
           <MenuTrayToggle />
         </MenuItemContainer>
-        <MenuItemContainer>
-          <MenuItem tooltip="Chat">
+        <MenuItemContainer className="flex-1 overflow-y-auto">
+          <MenuItem tooltip="Chat" asChild>
             <MenuLink href="/chat" ariaLabel="Go to the Chat page">
               <MessageCircle {...menuIconProps} />
+              <span className="text-sm">Chat</span>
             </MenuLink>
           </MenuItem>
-          <MenuItem tooltip="Persona">
-            <MenuLink href="/persona" ariaLabel="Go to the Persona configuration page">
+          <MenuItem tooltip="Persona" asChild>
+            <MenuLink
+              href="/persona"
+              ariaLabel="Go to the Persona configuration page"
+            >
               <VenetianMask {...menuIconProps} />
+              <span className="text-sm">Persona</span>
             </MenuLink>
           </MenuItem>
-          <MenuItem tooltip="extensions">
-            <MenuLink href="/extensions" ariaLabel="Go to the Extensions configuration page">
+          <MenuItem tooltip="Extensions" asChild>
+            <MenuLink
+              href="/extensions"
+              ariaLabel="Go to the Extensions configuration page"
+            >
               <PocketKnife {...menuIconProps} />
+              <span className="text-sm">Extensions</span>
             </MenuLink>
           </MenuItem>
-          <MenuItem tooltip="prompts">
-            <MenuLink href="/prompt" ariaLabel="Go to the Prompt Library configuration page">
+          <MenuItem tooltip="Prompt library" asChild>
+            <MenuLink
+              href="/prompt"
+              ariaLabel="Go to the Prompt Library configuration page"
+            >
               <Book {...menuIconProps} />
+              <span className="text-sm">Prompt Library</span>
             </MenuLink>
           </MenuItem>
           {user.isAdmin && (
-            <>
-              <MenuItem tooltip="reporting">
-                <MenuLink href="/reporting" ariaLabel="Go to the Admin reporting" >
-                  <Sheet {...menuIconProps} />
-                </MenuLink>
-              </MenuItem>
-            </>
+            <MenuItem tooltip="Reporting" asChild>
+              <MenuLink href="/reporting" ariaLabel="Go to the Admin reporting">
+                <Sheet {...menuIconProps} />
+                <span className="text-sm">Reporting</span>
+              </MenuLink>
+            </MenuItem>
           )}
         </MenuItemContainer>
-        <MenuItemContainer>
+        <MenuItemContainer className="border-t border-border pt-2">
           <MenuItem tooltip="Profile">
             <UserProfile />
           </MenuItem>

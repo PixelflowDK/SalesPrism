@@ -175,16 +175,26 @@ export const EnsureChatThreadOperation = async (
   chatThreadID: string
 ): Promise<ServerActionResponse<ChatThreadModel>> => {
   const response = await FindChatThreadForCurrentUser(chatThreadID);
+
+  if (response.status !== "OK") {
+    return response;
+  }
+
   const currentUser = await getCurrentUser();
   const hashedId = await userHashedId();
 
-  if (response.status === "OK") {
-    if (currentUser.isAdmin || response.response.userId === hashedId) {
-      return response;
-    }
+  if (currentUser.isAdmin || response.response.userId === hashedId) {
+    return response;
   }
 
-  return response;
+  return {
+    status: "UNAUTHORIZED",
+    errors: [
+      {
+        message: `Unauthorized access to chat thread: ${chatThreadID}`,
+      },
+    ],
+  };
 };
 
 export const AddExtensionToChatThread = async (props: {

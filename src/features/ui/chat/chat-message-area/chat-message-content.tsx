@@ -11,7 +11,8 @@ const ChatMessageContentArea: ForwardRefRenderFunction<
   return (
     <div
       ref={ref}
-      className="container max-w-3xl  relative min-h-screen pb-[240px] pt-16  flex flex-col gap-16"
+      // DESIGN.md §4.2 — `gutter` (24px) between sibling layout blocks.
+      className="container max-w-3xl relative min-h-screen pb-[240px] pt-8 flex flex-col gap-6"
     >
       {props.children}
     </div>
