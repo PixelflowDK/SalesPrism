@@ -17,3 +17,8 @@
 - Pipeline SP has NO Azure RBAC yet: az role assignment create is classifier-blocked in auto mode — user must run the two documented commands (see chat 2026-07-30 / resume.md) before provision-customer.yml can deploy. Validation deployment unaffected (runs under operator session).
 - Extensions/plugins execution deferred to Phase C Sprint 3 (SAD-sanctioned): attach/detach UI persists but attached extensions are not executed during chat; DALL-E image extension and /api/document proxy removed.
 - NEXTAUTH_URL is a *.azurewebsites.net placeholder until the DNS job binds the real hostname — provision workflow should update it post-DNS-bind (follow-up, Stage 3d/Phase D auth wiring).
+
+## Security remediations blocking production (2026-07-30)
+- **SR-001** — Entra client secret lives in App Service settings, not Key Vault. Accepted for validation only. Production requires Key Vault reference via managed identity + VNet integration. See docs/security-decision-log.md.
+- **SR-002** — `disableLocalAuth` unset on Azure OpenAI + Document Intelligence accounts (pre-existing gap). Production requires MI-verified real calls, then `disableLocalAuth: true`, then re-test.
+- Production deployment is prohibited until both pass. Validation work is not blocked.
