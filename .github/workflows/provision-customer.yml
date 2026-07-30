@@ -1,0 +1,573 @@
+name: Provision Customer
+
+# Sales Prism per-customer provisioning pipeline (SAD v2.7 §14, ADR-001).
+# Owner: github-actions-engineer subagent. Do not add stored Azure credentials —
+# OIDC workload identity federation only (federated credential:
+# repo:PixelflowDK/SalesPrism:environment:production / :environment:validation).
+
+on:
+  workflow_dispatch:
+    inputs:
+      customer_slug:
+        description: "Customer identifier — lowercase, alphanumeric + hyphens, starts with a letter, 2-20 chars (e.g. dsv)"
+        required: true
+        type: string
+      company_name:
+        description: "Company display name (e.g. DSV A/S)"
+        required: true
+        type: string
+      azure_region:
+        description: "Azure region — GDPR-approved only"
+        type: choice
+        options:
+          - westeurope
+          - northeurope
+        default: westeurope
+      app_service_sku:
+        description: "App Service Plan SKU (B1 is validation-only — never use for a production customer)"
+        type: choice
+        options:
+          - B3
+          - P1v3
+          - B1
+        default: B3
+      ai_model_tier:
+        description: "AI model tier — see ADR-001 (gpt-5.4-mini / gpt-5.4 / gpt-5.5). Professional/Enterprise are quota-gated as of 2026-07-30."
+        type: choice
+        options:
+          - standard
+          - professional
+          - enterprise
+        default: standard
+      ai_search_sku:
+        description: "Azure AI Search SKU"
+        type: choice
+        options:
+          - basic
+          - standard
+        default: basic
+      environment:
+        description: "Deployment environment — drives the GitHub Environment approval gate and Bicep environmentTag"
+        type: choice
+        options:
+          - production
+          - validation
+        default: production
+      persona_system_prompt:
+        description: "System prompt / persona for this customer's assistant"
+        required: true
+        type: string
+      logo_url:
+        description: "Customer logo URL for white-label theming"
+        type: string
+        default: ""
+      theme_id:
+        description: "Theme identifier (sales-coach / insightcast / custom)"
+        type: string
+        default: "sales-coach"
+
+# Only what each job actually needs — OIDC token issuance + repo checkout.
+permissions:
+  id-token: write
+  contents: read
+
+# One provisioning run per customer at a time — never race two runs against the same slug.
+concurrency:
+  group: provision-customer-${{ inputs.customer_slug }}
+  cancel-in-progress: false
+
+env:
+  CF_ZONE_NAME: pixelflow.dk
+  CF_API_BASE: https://api.cloudflare.com/client/v4
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1 — validate
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate customer_slug format
+        run: |
+          set -euo pipefail
+          SLUG="${{ inputs.customer_slug }}"
+          if ! echo "$SLUG" | grep -qE '^[a-z][a-z0-9-]{1,19}$'; then
+            echo "::error::Invalid slug '$SLUG' — must be lowercase, start with a letter, alphanumeric + hyphens only, 2-20 chars total."
+            exit 1
+          fi
+          echo "Slug format OK: $SLUG"
+
+      - name: Reject reserved slugs
+        run: |
+          set -euo pipefail
+          SLUG="${{ inputs.customer_slug }}"
+          RESERVED="admin api www mail test staging prod"
+          for r in $RESERVED; do
+            if [ "$SLUG" = "$r" ]; then
+              echo "::error::Slug '$SLUG' is reserved and cannot be used as a customer identifier. Reserved: $RESERVED"
+              exit 1
+            fi
+          done
+          echo "Slug '$SLUG' is not reserved."
+
+      - name: Validate required fields
+        run: |
+          set -euo pipefail
+          if [ -z "${{ inputs.company_name }}" ]; then
+            echo "::error::company_name is required and cannot be empty."
+            exit 1
+          fi
+          if [ -z "${{ inputs.persona_system_prompt }}" ]; then
+            echo "::error::persona_system_prompt is required and cannot be empty."
+            exit 1
+          fi
+          echo "Required fields present."
+
+      - name: Guard against B1 SKU in production
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.environment }}" = "production" ] && [ "${{ inputs.app_service_sku }}" = "B1" ]; then
+            echo "::error::app_service_sku B1 is validation-only (see infra/main.bicep). Choose B3 or P1v3 for a production customer."
+            exit 1
+          fi
+
+      - name: Warn on quota-gated model tier
+        run: |
+          if [ "${{ inputs.environment }}" = "production" ] && [ "${{ inputs.ai_model_tier }}" != "standard" ]; then
+            echo "::warning::ai_model_tier '${{ inputs.ai_model_tier }}' is quota-gated per ADR-001 (2026-07-30) until the corresponding Azure OpenAI quota grant lands in westeurope. Deployment will proceed but model deployment may fail if quota is still zero."
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — deploy-infrastructure
+  # environment: gates this job behind required-reviewer approval (production).
+  # The OIDC token is not issued until that approval happens.
+  # ---------------------------------------------------------------------------
+  deploy-infrastructure:
+    name: Deploy infrastructure
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      resource_group: ${{ steps.names.outputs.resource_group }}
+      app_service_name: ${{ steps.names.outputs.app_service_name }}
+      key_vault_name: ${{ steps.names.outputs.key_vault_name }}
+      app_service_hostname: ${{ steps.deploy.outputs.app_service_hostname }}
+      verification_id: ${{ steps.deploy.outputs.verification_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute deterministic resource names
+        id: names
+        run: |
+          SLUG="${{ inputs.customer_slug }}"
+          {
+            echo "resource_group=rg-azurechat-${SLUG}"
+            echo "app_service_name=app-azurechat-${SLUG}"
+            echo "key_vault_name=kv-azurechat-${SLUG}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install/update Bicep CLI
+        run: az bicep install && az bicep upgrade
+
+      - name: Lint Bicep template
+        run: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      - name: Bicep what-if preview (subscription scope)
+        run: |
+          az deployment sub what-if \
+            --name "provision-${{ inputs.customer_slug }}-${{ github.run_id }}" \
+            --location "${{ inputs.azure_region }}" \
+            --template-file infra/main.bicep \
+            --parameters \
+              customerSlug="${{ inputs.customer_slug }}" \
+              companyName="${{ inputs.company_name }}" \
+              azureRegion="${{ inputs.azure_region }}" \
+              appServiceSku="${{ inputs.app_service_sku }}" \
+              aiModelTier="${{ inputs.ai_model_tier }}" \
+              aiSearchSku="${{ inputs.ai_search_sku }}" \
+              environmentTag="${{ inputs.environment }}"
+        # infra/main.bicep is subscription-scoped (targetScope = 'subscription').
+        # Subscription/management-group/tenant scope deployments only ever behave as
+        # Incremental — Azure does not support --mode Complete at this scope (Complete
+        # mode is only valid for resource-group-scoped deployments), so no --mode flag
+        # is passed here or below. This satisfies "never --mode Complete" by construction.
+
+      - name: Bicep deploy (Incremental — subscription scope has no Complete mode)
+        id: deploy
+        run: |
+          set -euo pipefail
+          az deployment sub create \
+            --name "provision-${{ inputs.customer_slug }}-${{ github.run_id }}" \
+            --location "${{ inputs.azure_region }}" \
+            --template-file infra/main.bicep \
+            --parameters \
+              customerSlug="${{ inputs.customer_slug }}" \
+              companyName="${{ inputs.company_name }}" \
+              azureRegion="${{ inputs.azure_region }}" \
+              appServiceSku="${{ inputs.app_service_sku }}" \
+              aiModelTier="${{ inputs.ai_model_tier }}" \
+              aiSearchSku="${{ inputs.ai_search_sku }}" \
+              environmentTag="${{ inputs.environment }}" \
+            --output json > deployment-output.json
+
+          RG="${{ steps.names.outputs.resource_group }}"
+          APP="${{ steps.names.outputs.app_service_name }}"
+
+          HOSTNAME=$(jq -r '.properties.outputs.appServiceHostname.value' deployment-output.json)
+          echo "app_service_hostname=${HOSTNAME}" >> "$GITHUB_OUTPUT"
+
+          # customDomainVerificationId is not a Bicep output — read it directly off the
+          # deployed App Service so job 3 can publish the asuid TXT record.
+          VERIFICATION_ID=$(az webapp show -g "$RG" -n "$APP" --query customDomainVerificationId -o tsv)
+          echo "verification_id=${VERIFICATION_ID}" >> "$GITHUB_OUTPUT"
+
+          echo "Deployed resource group: $RG"
+          echo "App Service hostname: $HOSTNAME"
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — configure-dns
+  # Cloudflare API token is an encrypted repo secret (CLOUDFLARE_DNS_TOKEN,
+  # zone-scoped to pixelflow.dk) per verified platform configuration. Never echoed.
+  # This job may ONLY create/update records matching *-sales360.pixelflow.dk and
+  # NEVER deletes any DNS record.
+  # ---------------------------------------------------------------------------
+  configure-dns:
+    name: Configure DNS
+    needs: deploy-infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      record_base: ${{ steps.guard.outputs.record_base }}
+      fqdn: ${{ steps.guard.outputs.fqdn }}
+    steps:
+      - name: Load and mask Cloudflare token
+        run: |
+          echo "::add-mask::${{ secrets.CLOUDFLARE_DNS_TOKEN }}"
+          echo "CF_TOKEN=${{ secrets.CLOUDFLARE_DNS_TOKEN }}" >> "$GITHUB_ENV"
+
+      - name: Guard — record name must match *-sales360 pattern
+        id: guard
+        run: |
+          set -euo pipefail
+          SLUG="${{ inputs.customer_slug }}"
+          RECORD_BASE="${SLUG}-sales360"
+          if ! echo "$RECORD_BASE" | grep -qE '^[a-z][a-z0-9-]{1,19}-sales360$'; then
+            echo "::error::Computed DNS record name '$RECORD_BASE' does not match the required pattern ^[a-z][a-z0-9-]{1,19}-sales360\$. Refusing to touch Cloudflare DNS."
+            exit 1
+          fi
+          echo "record_base=${RECORD_BASE}" >> "$GITHUB_OUTPUT"
+          echo "fqdn=${RECORD_BASE}.${CF_ZONE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "DNS guard OK — will only touch ${RECORD_BASE}.${CF_ZONE_NAME} and asuid.${RECORD_BASE}.${CF_ZONE_NAME}"
+
+      - name: Resolve Cloudflare zone id
+        run: |
+          set -euo pipefail
+          ZONE_ID=$(curl --fail-with-body -sS -X GET "${CF_API_BASE}/zones?name=${CF_ZONE_NAME}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" \
+            -H "Content-Type: application/json" | jq -r '.result[0].id // empty')
+          if [ -z "$ZONE_ID" ]; then
+            echo "::error::Could not resolve Cloudflare zone id for ${CF_ZONE_NAME}"
+            exit 1
+          fi
+          echo "CF_ZONE_ID=${ZONE_ID}" >> "$GITHUB_ENV"
+
+      - name: Upsert CNAME record (proxied)
+        env:
+          RECORD_BASE: ${{ steps.guard.outputs.record_base }}
+          APP_HOSTNAME: ${{ needs.deploy-infrastructure.outputs.app_service_hostname }}
+        run: |
+          set -euo pipefail
+          NAME="${RECORD_BASE}.${CF_ZONE_NAME}"
+
+          # Re-assert the guard using the value actually sent to Cloudflare (defense in depth).
+          echo "$NAME" | grep -qE '^[a-z][a-z0-9-]{1,19}-sales360\.pixelflow\.dk$' || { echo "::error::CNAME name '$NAME' failed the *-sales360 guard"; exit 1; }
+
+          EXISTING_ID=$(curl --fail-with-body -sS -X GET \
+            "${CF_API_BASE}/zones/${CF_ZONE_ID}/dns_records?type=CNAME&name=${NAME}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" | jq -r '.result[0].id // empty')
+
+          PAYLOAD=$(jq -n --arg name "$NAME" --arg content "$APP_HOSTNAME" \
+            '{type:"CNAME", name:$name, content:$content, ttl:1, proxied:true}')
+
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Updating existing CNAME record $NAME ($EXISTING_ID) — never touching other records."
+            curl --fail-with-body -sS -X PUT "${CF_API_BASE}/zones/${CF_ZONE_ID}/dns_records/${EXISTING_ID}" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" \
+              --data "$PAYLOAD" > /dev/null
+          else
+            echo "Creating CNAME record $NAME"
+            curl --fail-with-body -sS -X POST "${CF_API_BASE}/zones/${CF_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" \
+              --data "$PAYLOAD" > /dev/null
+          fi
+
+      - name: Upsert TXT verification record (not proxied)
+        env:
+          RECORD_BASE: ${{ steps.guard.outputs.record_base }}
+          VERIFICATION_ID: ${{ needs.deploy-infrastructure.outputs.verification_id }}
+        run: |
+          set -euo pipefail
+          NAME="asuid.${RECORD_BASE}.${CF_ZONE_NAME}"
+
+          echo "$NAME" | grep -qE '^asuid\.[a-z][a-z0-9-]{1,19}-sales360\.pixelflow\.dk$' || { echo "::error::TXT name '$NAME' failed the *-sales360 guard"; exit 1; }
+
+          EXISTING_ID=$(curl --fail-with-body -sS -X GET \
+            "${CF_API_BASE}/zones/${CF_ZONE_ID}/dns_records?type=TXT&name=${NAME}" \
+            -H "Authorization: Bearer ${CF_TOKEN}" | jq -r '.result[0].id // empty')
+
+          # TXT verification records must never be proxied (CLAUDE.md gotcha).
+          PAYLOAD=$(jq -n --arg name "$NAME" --arg content "$VERIFICATION_ID" \
+            '{type:"TXT", name:$name, content:$content, ttl:1, proxied:false}')
+
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Updating existing TXT record $NAME ($EXISTING_ID) — never touching other records."
+            curl --fail-with-body -sS -X PUT "${CF_API_BASE}/zones/${CF_ZONE_ID}/dns_records/${EXISTING_ID}" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" \
+              --data "$PAYLOAD" > /dev/null
+          else
+            echo "Creating TXT record $NAME"
+            curl --fail-with-body -sS -X POST "${CF_API_BASE}/zones/${CF_ZONE_ID}/dns_records" \
+              -H "Authorization: Bearer ${CF_TOKEN}" -H "Content-Type: application/json" \
+              --data "$PAYLOAD" > /dev/null
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Job 4 — configure-application
+  # Hostname bind, TLS (Origin Certificate best-effort), app settings, build+deploy.
+  # ---------------------------------------------------------------------------
+  configure-application:
+    name: Configure application
+    needs: [deploy-infrastructure, configure-dns]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      tls_status: ${{ steps.tls.outputs.tls_status }}
+      app_url: https://${{ needs.configure-dns.outputs.fqdn }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Bind custom hostname
+        env:
+          RG: ${{ needs.deploy-infrastructure.outputs.resource_group }}
+          APP: ${{ needs.deploy-infrastructure.outputs.app_service_name }}
+          FQDN: ${{ needs.configure-dns.outputs.fqdn }}
+        run: |
+          set -euo pipefail
+          az webapp config hostname add \
+            --webapp-name "$APP" \
+            --resource-group "$RG" \
+            --hostname "$FQDN"
+
+      - name: TLS — Cloudflare Origin Certificate (best-effort, non-blocking)
+        id: tls
+        env:
+          RG: ${{ needs.deploy-infrastructure.outputs.resource_group }}
+          APP: ${{ needs.deploy-infrastructure.outputs.app_service_name }}
+          KV: ${{ needs.deploy-infrastructure.outputs.key_vault_name }}
+          FQDN: ${{ needs.configure-dns.outputs.fqdn }}
+          CF_ORIGIN_CA_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_CA_KEY }}
+        run: |
+          set -euo pipefail
+          WORKDIR=$(mktemp -d)
+          cleanup() { rm -rf "$WORKDIR"; }
+          trap cleanup EXIT
+
+          if [ -z "${CF_ORIGIN_CA_KEY}" ]; then
+            echo "::warning::CLOUDFLARE_ORIGIN_CA_KEY is not configured. Skipping Origin Certificate generation — TLS is 'pending'. Traffic is still served: the App Service default hostname is reachable through the Cloudflare proxy (SSL mode Full), it just is not yet Full (Strict). Add the CLOUDFLARE_ORIGIN_CA_KEY secret and re-run this job to upgrade to Full (strict)."
+            echo "tls_status=pending" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::add-mask::${CF_ORIGIN_CA_KEY}"
+
+          openssl req -new -newkey rsa:2048 -nodes \
+            -keyout "$WORKDIR/origin-key.pem" \
+            -out "$WORKDIR/origin.csr" \
+            -subj "/CN=${FQDN}" 2>/dev/null
+
+          CSR_JSON=$(jq -Rs . < "$WORKDIR/origin.csr")
+          REQUEST_BODY=$(jq -n --argjson csr "$CSR_JSON" --arg hostname "$FQDN" \
+            '{hostnames: [$hostname], requested_validity: 5475, request_type: "origin-rsa", csr: $csr}')
+
+          set +e
+          RESPONSE=$(curl -sS -X POST "${CF_API_BASE}/certificates" \
+            -H "X-Auth-User-Service-Key: ${CF_ORIGIN_CA_KEY}" \
+            -H "Content-Type: application/json" \
+            --data "$REQUEST_BODY")
+          CURL_STATUS=$?
+          set -e
+
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success // false' 2>/dev/null || echo "false")
+          if [ "$CURL_STATUS" -ne 0 ] || [ "$SUCCESS" != "true" ]; then
+            echo "::warning::Cloudflare Origin Certificate request failed — continuing without it. TLS is 'pending'. App Service traffic is still served via the Cloudflare proxy (SSL mode Full). Response: $(echo "$RESPONSE" | jq -c '.errors // empty' 2>/dev/null)"
+            echo "tls_status=pending" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "$RESPONSE" | jq -r '.result.certificate' > "$WORKDIR/origin-cert.pem"
+
+          PFX_PASSWORD=$(openssl rand -base64 32)
+          echo "::add-mask::${PFX_PASSWORD}"
+
+          openssl pkcs12 -export \
+            -in "$WORKDIR/origin-cert.pem" \
+            -inkey "$WORKDIR/origin-key.pem" \
+            -out "$WORKDIR/origin-cert.pfx" \
+            -passout pass:"${PFX_PASSWORD}"
+
+          # Escrow the PFX + password in the customer Key Vault. Best-effort: the KV has
+          # publicNetworkAccess disabled (private-endpoint only, see infra/modules/key-vault.bicep)
+          # so a GitHub-hosted runner cannot reach it and this is EXPECTED to fail until an
+          # infra decision is made (self-hosted runner in the VNet, a temporary firewall
+          # exception, or an az deployment script). The certificate is still installed and
+          # bound directly below via local file upload, which does not require KV access —
+          # so this failing does not block TLS from working, it only blocks long-term escrow.
+          set +e
+          PFX_B64=$(base64 -i "$WORKDIR/origin-cert.pfx" | tr -d '\n')
+          az keyvault secret set --vault-name "$KV" --name "origin-cert-pfx-base64" --value "$PFX_B64" -o none 2>"$WORKDIR/kv-err.log"
+          KV_CERT_STATUS=$?
+          az keyvault secret set --vault-name "$KV" --name "origin-cert-pfx-password" --value "$PFX_PASSWORD" -o none 2>>"$WORKDIR/kv-err.log"
+          KV_PASS_STATUS=$?
+          set -e
+          if [ "$KV_CERT_STATUS" -ne 0 ] || [ "$KV_PASS_STATUS" -ne 0 ]; then
+            echo "::warning::Could not write Origin Certificate material to Key Vault '$KV' (expected if the vault's public network access is disabled and no private-endpoint-reachable runner is available). Certificate install/bind will proceed from local file. Escrow this manually or fix runner network reachability — see job summary."
+          fi
+
+          THUMBPRINT=$(az webapp config ssl upload \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --certificate-file "$WORKDIR/origin-cert.pfx" \
+            --certificate-password "$PFX_PASSWORD" \
+            --query thumbprint -o tsv)
+
+          az webapp config ssl bind \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --certificate-thumbprint "$THUMBPRINT" \
+            --ssl-type SNI
+
+          echo "tls_status=installed" >> "$GITHUB_OUTPUT"
+
+      - name: Set application settings (no secrets/keys — managed identity only)
+        env:
+          RG: ${{ needs.deploy-infrastructure.outputs.resource_group }}
+          APP: ${{ needs.deploy-infrastructure.outputs.app_service_name }}
+        run: |
+          set -euo pipefail
+          az webapp config appsettings set \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --settings \
+              AI_MODEL_TIER="${{ inputs.ai_model_tier }}" \
+              THEME_ID="${{ inputs.theme_id }}" \
+              LOGO_URL="${{ inputs.logo_url }}" \
+              PERSONA_SYSTEM_PROMPT="${{ inputs.persona_system_prompt }}" \
+              COMPANY_NAME="${{ inputs.company_name }}" \
+              CUSTOMER_SLUG="${{ inputs.customer_slug }}" \
+              SCM_DO_BUILD_DURING_DEPLOYMENT="false" \
+              WEBSITE_NODE_DEFAULT_VERSION="~22" \
+            -o none
+          # NOTE: AZURE_OPENAI_ENDPOINT / AZURE_SEARCH_ENDPOINT / AZURE_COSMOSDB_ENDPOINT /
+          # AZURE_KEYVAULT_ENDPOINT / AZURE_STORAGE_ACCOUNT_NAME / AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT
+          # are already populated by infra/main.bicep's app-service module at deploy time
+          # (see infra/modules/app-service.bicep) — this workflow does not own infra/ and does
+          # not re-set them here. USE_MANAGED_IDENTITIES=true is likewise set by Bicep. No
+          # *_KEY / *_SECRET / *_CONNECTION_STRING value is ever set from this workflow.
+
+          az webapp config set \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --startup-file "node server.js" \
+            -o none
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build application (Next.js standalone output)
+        working-directory: src
+        run: |
+          npm ci --legacy-peer-deps
+          npm run build
+
+      - name: Package standalone build for zip deploy
+        run: |
+          set -euo pipefail
+          rm -rf site-deploy
+          mkdir -p site-deploy
+          cp -R src/.next/standalone/. site-deploy/
+          mkdir -p site-deploy/.next
+          cp -R src/.next/static site-deploy/.next/static
+          cp -R src/public site-deploy/public
+          cd site-deploy
+          zip -qr ../app.zip .
+
+      - name: Deploy application code (zip)
+        env:
+          RG: ${{ needs.deploy-infrastructure.outputs.resource_group }}
+          APP: ${{ needs.deploy-infrastructure.outputs.app_service_name }}
+        run: |
+          az webapp deploy \
+            --resource-group "$RG" \
+            --name "$APP" \
+            --src-path app.zip \
+            --type zip
+
+  # ---------------------------------------------------------------------------
+  # Job 5 — summary
+  # ---------------------------------------------------------------------------
+  summary:
+    name: Provisioning summary
+    needs: [deploy-infrastructure, configure-dns, configure-application]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Write summary
+        env:
+          RG: ${{ needs.deploy-infrastructure.outputs.resource_group }}
+          FQDN: ${{ needs.configure-dns.outputs.fqdn }}
+          TLS_STATUS: ${{ needs.configure-application.outputs.tls_status }}
+          SUB_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          {
+            echo "## Sales Prism — Customer Provisioned: ${{ inputs.customer_slug }}"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Customer URL | https://${FQDN:-not-configured} |"
+            echo "| Resource Group | ${RG:-unknown} |"
+            echo "| Azure Portal | https://portal.azure.com/#@/resource/subscriptions/${SUB_ID}/resourceGroups/${RG}/overview |"
+            echo "| TLS status | ${TLS_STATUS:-unknown} (installed = Full Strict origin cert bound; pending = served via Cloudflare proxy, Full mode, no origin cert yet) |"
+            echo "| Environment | ${{ inputs.environment }} |"
+            echo "| AI model tier | ${{ inputs.ai_model_tier }} |"
+            echo ""
+            echo "### Next steps"
+            echo "- DNS may take a few minutes to propagate before the custom hostname resolves everywhere."
+            if [ "${TLS_STATUS:-pending}" = "pending" ]; then
+              echo "- TLS is pending: add the CLOUDFLARE_ORIGIN_CA_KEY secret and re-run the configure-application job to upgrade to Full (strict)."
+            fi
+            echo "- Entra ID App Registration for this customer is NOT created by this workflow (see scripts/appreg_setup.sh) — run separately if required."
+            echo "- Cosmos DB TenantTheme seeding is NOT performed by this workflow — Cosmos DB has publicNetworkAccess disabled (private-endpoint only), so this needs a network-reachable path (self-hosted runner in the VNet, or app-side first-run bootstrap) before it can be automated here."
+            echo "- Admin registry write (customer record) is a Phase D / Admin Portal feature (SAD §15) and is not yet implemented — no admin-registry Cosmos DB resource exists in infra/ yet. Track manually until that lands."
+            if [ "${{ inputs.ai_model_tier }}" != "standard" ] && [ "${{ inputs.environment }}" = "production" ]; then
+              echo "- ai_model_tier '${{ inputs.ai_model_tier }}' is quota-gated per ADR-001 — confirm the Azure OpenAI quota grant has landed in westeurope before telling the customer it is live."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
