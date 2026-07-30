@@ -1,10 +1,11 @@
 {
-  "phase": "Stage 3b — validation deployment (blocked on user) / Stage 4 UI in flight",
-  "lastCompletedTask": "cosmosRegion reroute implemented + committed; Stage 3c complete; Phase C migration committed (9c24e46)",
+  "phase": "Stage 5c (Phase F) + Stage 6 (tests) in flight",
+  "lastCompletedTask": "val1 app deployed + auth wired; site live at https://val1-sales360.pixelflow.dk (200, azure-ad provider)",
   "branch": "develop",
-  "lastStableCommit": "8daee24",
+  "lastStableCommit": "084b974",
   "activeAgents": [
-    "stage4-ui-worker"
+    "phaseF-worker",
+    "tests-worker"
   ],
   "blockers": [
     "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large (operator portal request, 2-5 days)"
@@ -18,8 +19,9 @@
     "gpt-5-nano",
     "text-embedding-3-large"
   ],
-  "nextAction": "Once the wedged Cosmos account is deleted: az deployment sub create --name val1-initial-r3-<ts> --location westeurope --template-file infra/main.bicep --parameters infra/environments/validation.bicepparam (cosmosRegion=northeurope), then a-f verification",
+  "nextAction": "Integrate Phase F + test suite, then Stage 7 reviews (security/GDPR/compliance/cost/Codex re-review)",
   "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
   "approxCreditNote": "7 sonnet worker runs + 1 haiku so far; Fable lead in delegation mode; codex review queued",
-  "updatedAt": "2026-07-30T18:25"
+  "updatedAt": "2026-07-30T20:05",
+  "leadModel": "Opus (switched from Fable 5 for cost)"
 }

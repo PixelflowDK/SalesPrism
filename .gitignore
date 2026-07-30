@@ -12,6 +12,14 @@
 **/.next/
 **/out/
 
+# @ducanh2912/next-pwa — regenerated into public/ on every `next build`
+src/public/sw.js
+src/public/sw.js.map
+src/public/workbox-*.js
+src/public/workbox-*.js.map
+src/public/worker-*.js
+src/public/worker-*.js.map
+
 # production
 **/build
 
