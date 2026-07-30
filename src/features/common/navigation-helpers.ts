@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 type Page = "extensions" | "persona" | "prompt" | "chat" | "settings";
 
-export const RevalidateCache = (props: {
+export const RevalidateCache = async (props: {
   page: Page;
   params?: string | undefined;
   type?: "layout" | "page" | undefined;
@@ -17,10 +17,10 @@ export const RevalidateCache = (props: {
   }
 };
 
-export const RedirectToPage = (path: Page) => {
+export const RedirectToPage = async (path: Page) => {
   redirect(`/${path}`);
 };
 
-export const RedirectToChatThread = (chatThreadId: string) => {
+export const RedirectToChatThread = async (chatThreadId: string) => {
   redirect(`/chat/${chatThreadId}`);
 };

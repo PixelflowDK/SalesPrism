@@ -1,4 +1,3 @@
-"use server";
 import "server-only";
 
 import { ServerActionResponse } from "@/features/common/server-action-response";
