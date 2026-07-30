@@ -2,11 +2,7 @@
 import { uniqueId } from "@/features/common/util";
 import { showError } from "@/features/globals/global-message-store";
 import { AI_NAME, NEW_CHAT_NAME } from "@/features/theme/theme-config";
-import {
-  ParsedEvent,
-  ReconnectInterval,
-  createParser,
-} from "eventsource-parser";
+import { readUIMessageStream, type UIMessage } from "ai";
 import { FormEvent } from "react";
 import { proxy, useSnapshot } from "valtio";
 import { RevalidateCache } from "../common/navigation-helpers";
@@ -18,11 +14,8 @@ import {
   RemoveExtensionFromChatThread,
   UpdateChatTitle,
 } from "./chat-services/chat-thread-service";
-import {
-  AzureChatCompletion,
-  ChatMessageModel,
-  ChatThreadModel,
-} from "./chat-services/models";
+import { ChatMessageModel, ChatThreadModel } from "./chat-services/models";
+import { extractTextFromUIMessage, toUIMessageChunkStream } from "./ui-message-stream";
 let abortController: AbortController = new AbortController();
 
 type chatStatus = "idle" | "loading" | "file upload";
@@ -166,94 +159,60 @@ class ChatState {
         signal: controller.signal,
       });
 
-      const onParse = (event: ParsedEvent | ReconnectInterval) => {
-        if (event.type === "event") {
-          const responseType = JSON.parse(event.data) as AzureChatCompletion;
-          switch (responseType.type) {
-            case "functionCall":
-              const mappedFunction: ChatMessageModel = {
-                id: uniqueId(),
-                content: responseType.response.arguments,
-                name: responseType.response.name,
-                role: "function",
-                createdAt: new Date(),
-                isDeleted: false,
-                threadId: this.chatThreadId,
-                type: "CHAT_MESSAGE",
-                userId: "",
-                multiModalImage: "",
-              };
-              this.addToMessages(mappedFunction);
-              break;
-            case "functionCallResult":
-              const mappedFunctionResult: ChatMessageModel = {
-                id: uniqueId(),
-                content: responseType.response,
-                name: "tool",
-                role: "tool",
-                createdAt: new Date(),
-                isDeleted: false,
-                threadId: this.chatThreadId,
-                type: "CHAT_MESSAGE",
-                userId: "",
-                multiModalImage: "",
-              };
-              this.addToMessages(mappedFunctionResult);
-              break;
-            case "content":
-              const mappedContent: ChatMessageModel = {
-                id: responseType.response.id,
-                content: responseType.response.choices[0].message.content || "",
-                name: AI_NAME,
-                role: "assistant",
-                createdAt: new Date(),
-                isDeleted: false,
-                threadId: this.chatThreadId,
-                type: "CHAT_MESSAGE",
-                userId: "",
-                multiModalImage: "",
-              };
-
-              this.addToMessages(mappedContent);
-              this.lastMessage = mappedContent.content;
-
-              break;
-            case "abort":
-              this.removeMessage(newUserMessage.id);
-              this.loading = "idle";
-              break;
-            case "error":
-              showError(responseType.response);
-              this.loading = "idle";
-              break;
-            case "finalContent":
-              this.loading = "idle";
-              this.completed(this.lastMessage);
-              this.updateTitle();
-              break;
-            default:
-              break;
-          }
-        }
-      };
-
-      if (response.body) {
-        const parser = createParser(onParse);
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let done = false;
-        while (!done) {
-          const { value, done: doneReading } = await reader.read();
-          done = doneReading;
-
-          const chunkValue = decoder.decode(value);
-          parser.feed(chunkValue);
-        }
-        this.loading = "idle";
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        showError(errorText || `Chat request failed (${response.status})`);
+        this.removeMessage(newUserMessage.id);
+        return;
       }
+
+      if (!response.body) {
+        showError("Empty response body from chat API");
+        this.removeMessage(newUserMessage.id);
+        return;
+      }
+
+      const messageStream = readUIMessageStream({
+        stream: toUIMessageChunkStream(response.body),
+        onError: (error) => console.error("🔴 chat stream error:", error),
+        terminateOnError: true,
+      });
+
+      // Generated once per turn (not from uiMessage.id) so every incremental
+      // snapshot updates the same valtio-store entry, regardless of whether
+      // the server's message id is present on the very first streamed chunk.
+      const assistantMessageId = uniqueId();
+
+      for await (const uiMessage of messageStream as AsyncIterable<UIMessage>) {
+        const content = extractTextFromUIMessage(uiMessage);
+
+        const mappedContent: ChatMessageModel = {
+          id: assistantMessageId,
+          content,
+          name: AI_NAME,
+          role: "assistant",
+          createdAt: new Date(),
+          isDeleted: false,
+          threadId: this.chatThreadId,
+          type: "CHAT_MESSAGE",
+          userId: "",
+          multiModalImage: "",
+        };
+
+        this.addToMessages(mappedContent);
+        this.lastMessage = mappedContent.content;
+      }
+
+      this.loading = "idle";
+      this.completed(this.lastMessage);
+      this.updateTitle();
     } catch (error) {
-      showError("" + error);
+      if (controller.signal.aborted) {
+        this.removeMessage(newUserMessage.id);
+      } else {
+        showError("" + error);
+      }
+    } finally {
       this.loading = "idle";
     }
   }

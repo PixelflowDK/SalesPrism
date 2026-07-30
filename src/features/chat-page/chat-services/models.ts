@@ -1,6 +1,3 @@
-import { ChatCompletionSnapshot } from "openai/lib/ChatCompletionStream";
-import { ChatCompletionMessage } from "openai/resources/chat/completions";
-
 export const CHAT_DOCUMENT_ATTRIBUTE = "CHAT_DOCUMENT";
 export const CHAT_THREAD_ATTRIBUTE = "CHAT_THREAD";
 export const MESSAGE_ATTRIBUTE = "CHAT_MESSAGE";
@@ -52,12 +49,6 @@ export interface ChatDocumentModel {
   type: typeof CHAT_DOCUMENT_ATTRIBUTE;
 }
 
-export interface ToolsInterface {
-  name: string;
-  description: string;
-  parameters: any;
-}
-
 export type MenuItemsGroupName = "Bookmarked" | "Past 7 days" | "Previous";
 
 export type MenuItemsGroup = {
@@ -70,41 +61,3 @@ export type ChatCitationModel = {
   userId: string;
   type: typeof CHAT_CITATION_ATTRIBUTE;
 };
-
-export type AzureChatCompletionFunctionCall = {
-  type: "functionCall";
-  response: ChatCompletionMessage.FunctionCall;
-};
-
-export type AzureChatCompletionFunctionCallResult = {
-  type: "functionCallResult";
-  response: string;
-};
-
-export type AzureChatCompletionContent = {
-  type: "content";
-  response: ChatCompletionSnapshot;
-};
-
-export type AzureChatCompletionFinalContent = {
-  type: "finalContent";
-  response: string;
-};
-
-export type AzureChatCompletionError = {
-  type: "error";
-  response: string;
-};
-
-export type AzureChatCompletionAbort = {
-  type: "abort";
-  response: string;
-};
-
-export type AzureChatCompletion =
-  | AzureChatCompletionError
-  | AzureChatCompletionFunctionCall
-  | AzureChatCompletionFunctionCallResult
-  | AzureChatCompletionContent
-  | AzureChatCompletionFinalContent
-  | AzureChatCompletionAbort;

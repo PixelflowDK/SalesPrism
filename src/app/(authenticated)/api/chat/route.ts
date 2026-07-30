@@ -1,31 +1,16 @@
-import { streamText } from "ai";
-import { createAzure } from "@ai-sdk/azure";
-import {
-  DefaultAzureCredential,
-  getBearerTokenProvider,
-} from "@azure/identity";
+import { ChatAPIEntry } from "@/features/chat-page/chat-services/chat-handler";
+import { UserPrompt } from "@/features/chat-page/chat-services/models";
 
-export async function POST(req: Request) {
-  const { messages } = await req.json();
+export async function POST(req: Request): Promise<Response> {
+  const formData = await req.formData();
+  const content = formData.get("content") as string | null;
 
-  const credential = new DefaultAzureCredential();
-  const tokenProvider = getBearerTokenProvider(
-    credential,
-    "https://cognitiveservices.azure.com/.default"
-  );
+  if (!content) {
+    return new Response("Missing chat request content", { status: 400 });
+  }
 
-  const azure = createAzure({
-    resourceName: process.env.AZURE_OPENAI_API_INSTANCE_NAME!,
-    apiVersion: "2025-01-01-preview",
-    apiKey: undefined,
-    // @ts-expect-error — azureADTokenProvider ikke i type endnu
-    azureADTokenProvider: tokenProvider,
-  });
+  const props = JSON.parse(content) as UserPrompt;
+  props.multimodalImage = (formData.get("image-base64") as string) ?? "";
 
-  const result = await streamText({
-    model: azure(process.env.AZURE_OPENAI_API_DEPLOYMENT_NAME!),
-    messages,
-  });
-
-  return result.toUIMessageStreamResponse();
+  return await ChatAPIEntry(props, req.signal);
 }

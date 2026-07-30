@@ -7,13 +7,13 @@ import {
   AzureAISearchIndexClientInstance,
   AzureAISearchInstance,
 } from "@/features/common/services/ai-search";
-import { OpenAIEmbeddingInstance } from "@/features/common/services/openai";
-import { uniqueId } from "@/features/common/util";
 import {
-  AzureKeyCredential,
-  SearchClient,
-  SearchIndex,
-} from "@azure/search-documents";
+  AZURE_OPENAI_EMBEDDING_DIMENSIONS,
+  getEmbeddingModel,
+} from "@/features/common/services/azure-ai";
+import { uniqueId } from "@/features/common/util";
+import { SearchIndex } from "@azure/search-documents";
+import { embed, embedMany } from "ai";
 
 const debug = process.env.DEBUG === "true";
 
@@ -73,13 +73,12 @@ export const SimilaritySearch = async (
 ): Promise<ServerActionResponse<Array<DocumentSearchResponse>>> => {
   try {
     if (debug) console.log("Executing SimilaritySearch with searchText:", searchText, "k:", k, "filter:", filter);
-    const openai = OpenAIEmbeddingInstance();
-    const embeddings = await openai.embeddings.create({
-      input: searchText,
-      model: "",
+    const { embedding } = await embed({
+      model: getEmbeddingModel(),
+      value: searchText,
     });
 
-    if (debug) console.log("Embeddings obtained:", embeddings);
+    if (debug) console.log("Embedding obtained, dimensions:", embedding.length);
 
     const searchClient = AzureAISearchInstance<AzureSearchDocumentIndex>();
     const searchResults = await searchClient.search(searchText, {
@@ -88,7 +87,7 @@ export const SimilaritySearch = async (
       vectorSearchOptions: {
         queries: [
           {
-            vector: embeddings.data[0].embedding,
+            vector: embedding,
             fields: ["embedding"],
             kind: "vector",
             kNearestNeighborsCount: 10,
@@ -123,87 +122,12 @@ export const SimilaritySearch = async (
   }
 };
 
-export const ExtensionSimilaritySearch = async (props: {
-  searchText: string;
-  vectors: string[];
-  apiKey: string;
-  searchName: string;
-  indexName: string;
-}): Promise<ServerActionResponse<Array<DocumentSearchResponse>>> => {
-  try {
-    if (debug) console.log("Executing ExtensionSimilaritySearch with props:", props);
-    const openai = OpenAIEmbeddingInstance();
-    const { searchText, vectors, apiKey, searchName, indexName } = props;
-
-    const embeddings = await openai.embeddings.create({
-      input: searchText,
-      model: "",
-    });
-
-    if (debug) console.log("Embeddings obtained:", embeddings);
-
-    const endpointSuffix = process.env.AZURE_SEARCH_ENDPOINT_SUFFIX || "search.windows.net";
-    const endpoint = `https://${searchName}.${endpointSuffix}`;
-    const searchClient = new SearchClient(
-      endpoint,
-      indexName,
-      new AzureKeyCredential(apiKey)
-    );
-
-    const searchResults = await searchClient.search(searchText, {
-      top: 3,
-      vectorSearchOptions: {
-        queries: [
-          {
-            vector: embeddings.data[0].embedding,
-            fields: vectors,
-            kind: "vector",
-            kNearestNeighborsCount: 10,
-          },
-        ],
-      },
-    });
-
-    const results: Array<any> = [];
-    for await (const result of searchResults.results) {
-      const item = {
-        score: result.score,
-        document: result.document,
-      };
-
-      const document = item.document as any;
-      const newDocument: any = {};
-
-      for (const key in document) {
-        const hasKey = vectors.includes(key);
-        if (!hasKey) {
-          newDocument[key] = document[key];
-        }
-      }
-
-      results.push({
-        score: result.score,
-        document: newDocument,
-      });
-    }
-
-    if (debug) console.log("ExtensionSimilaritySearch results:", results);
-    return {
-      status: "OK",
-      response: results,
-    };
-  } catch (e) {
-    console.error("ExtensionSimilaritySearch error:", e);
-    return {
-      status: "ERROR",
-      errors: [
-        {
-          message: `${e}`,
-        },
-      ],
-    };
-  }
-};
+// NOTE: `ExtensionSimilaritySearch` (per-request AzureKeyCredential search against an
+// extension-supplied index) was removed here. It was dead code once
+// `chat-services/chat-api/*` (the dynamic extensions plugin system, including
+// `/api/document`'s proxy route) was deleted — extension execution is deferred to
+// SAD §18 Phase C Sprint 3. Its API-key-credential pattern would also have conflicted
+// with the zero-secrets / DefaultAzureCredential-only mandate.
 
 export const IndexDocuments = async (
   fileName: string,
@@ -336,18 +260,17 @@ export const EmbedDocuments = async (
 ): Promise<ServerActionResponse<Array<AzureSearchDocumentIndex>>> => {
   try {
     if (debug) console.log("Embedding documents:", documents.map((d) => d.id));
-    const openai = OpenAIEmbeddingInstance();
     const contentsToEmbed = documents.map((d) => d.pageContent);
 
-    const embeddings = await openai.embeddings.create({
-      input: contentsToEmbed,
-      model: process.env.AZURE_OPENAI_API_EMBEDDINGS_DEPLOYMENT_NAME,
+    const { embeddings } = await embedMany({
+      model: getEmbeddingModel(),
+      values: contentsToEmbed,
     });
 
-    if (debug) console.log("Embeddings received:", embeddings);
+    if (debug) console.log(`Embeddings received: ${embeddings.length}`);
 
-    embeddings.data.forEach((embedding, index) => {
-      documents[index].embedding = embedding.embedding;
+    embeddings.forEach((embedding, index) => {
+      documents[index].embedding = embedding;
     });
 
     if (debug) console.log("Documents after embedding:", documents);
@@ -450,7 +373,7 @@ const CreateSearchIndex = async (): Promise<
           filterable: false,
           sortable: false,
           facetable: false,
-          vectorSearchDimensions: 1536,
+          vectorSearchDimensions: AZURE_OPENAI_EMBEDDING_DIMENSIONS,
           vectorSearchProfileName: "hnsw-vector",
         },
       ],
