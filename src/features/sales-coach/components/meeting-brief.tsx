@@ -135,7 +135,10 @@ export const MeetingBrief = ({
         <div className="mt-5 flex gap-3 border-t border-border pt-4">
           <Link
             href={`/briefs/${briefId}`}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary-hover"
+            // SR-004 — same fix as src/features/ui/button.tsx: white text on
+            // raw bg-primary measures 4.03:1 (fails AA); bg-primary-text is
+            // the AA-safe darkened Copper fill.
+            className="rounded-md bg-primary-text px-4 py-2 text-sm font-bold text-primary-foreground hover:bg-primary-hover"
           >
             Open saved brief
           </Link>

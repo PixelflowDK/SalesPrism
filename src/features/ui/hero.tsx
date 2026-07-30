@@ -38,7 +38,8 @@ export const HeroButton: FC<HeroButtonProps> = (props) => {
       className="flex flex-col gap-4 h-auto p-4 items-start text-start justify-start bg-card border-border transition-transform duration-150 ease-out hover:scale-[1.02] hover:border-primary"
       onClick={props.onClick}
     >
-      <span className="flex gap-2 items-center text-primary font-medium">
+      {/* SR-004 — body-sized label (inherits button's text-sm); text-primary-text is the AA-safe darker Copper. */}
+      <span className="flex gap-2 items-center text-primary-text font-medium">
         <span aria-hidden="true">{props.icon}</span>
         <span className="">{props.title}</span>
       </span>

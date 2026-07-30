@@ -96,7 +96,7 @@ export const HelpPanel = () => {
                   const model = SALES_COACH_MODULE_REGISTRY[key];
                   return (
                     <div key={key} className="rounded-md border-l-[3px] border-primary bg-ai px-5 py-4">
-                      <p className="font-mono text-xs uppercase tracking-[0.1em] text-primary">{key}</p>
+                      <p className="font-mono text-xs uppercase tracking-[0.1em] text-primary-text">{key}</p>
                       <p className="mt-1 font-body font-semibold text-foreground">{model.name}</p>
                       <p className="mt-1 text-sm text-muted-foreground">{model.essence}</p>
                     </div>

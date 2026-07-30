@@ -32,6 +32,12 @@ module.exports = {
           hover: "var(--color-primary-hover)",
           light: "var(--color-primary-light)",
           foreground: "var(--color-text-on-primary)",
+          // SR-004 — WCAG AA contrast fix. `bg-primary-text` / `text-primary-text`:
+          // the body-copy- and button-fill-safe darker Copper (DESIGN.md §7.3 /
+          // src/app/globals.css). `text-primary` itself is unchanged and stays
+          // reserved for large headings (>=24px normal or >=19px bold),
+          // decorative borders, and non-text fills/icons.
+          text: "var(--color-primary-text)",
         },
         secondary: {
           DEFAULT: "var(--color-secondary)",

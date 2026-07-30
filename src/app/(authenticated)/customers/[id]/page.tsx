@@ -41,7 +41,7 @@ export default async function CustomerDetailPage(props: Props) {
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-8 py-8">
       <header className="flex items-center justify-between">
         <div>
-          <Link href="/customers" className="text-sm text-muted-foreground hover:text-primary">
+          <Link href="/customers" className="text-sm text-muted-foreground hover:text-primary-text">
             ← Customers
           </Link>
           <h1 className="mt-1 font-display text-2xl font-bold text-foreground">{customer.customerName}</h1>
@@ -97,7 +97,7 @@ export default async function CustomerDetailPage(props: Props) {
           <ul className="mt-3 flex flex-col gap-2">
             {customer.meetingHistory.map((briefId) => (
               <li key={briefId}>
-                <Link href={`/briefs/${briefId}`} className="text-sm text-primary hover:underline">
+                <Link href={`/briefs/${briefId}`} className="text-sm text-primary-text hover:underline">
                   {briefId}
                 </Link>
               </li>

@@ -70,7 +70,8 @@ conflicts appendix).
 
 | Role | Token | Light | Dark | Usage |
 |---|---|---|---|---|
-| Primary | `--color-primary` | `#B86A4B` Copper Fjord | `#D4856A` | CTAs, active nav indicator, AI Response Block border + headings, links |
+| Primary | `--color-primary` | `#B86A4B` Copper Fjord | `#D4856A` | Large headings (≥24px normal or ≥19px bold), decorative borders/left-accents, non-text fills/icons (WCAG SC 1.4.11, 3:1) — **never body-copy text or a solid button fill with text on top** (see §7.3) |
+| Primary text (**SR-004**) | `--color-primary-text` | `#99583E` | `#D4856A` (dark mode already compliant, see §7.3) | Body-copy-sized text in the accent hue, and the solid CTA button/fill background wherever white text sits on top (`features/ui/button.tsx` default variant, `meeting-brief.tsx`'s "Open saved brief"). Measured: **5.50:1** on white, **4.70:1** on `--color-bg-ai` — both pass AA normal text. |
 | Primary hover | `--color-primary-hover` | `#A05A3D` | `#E2A186` | Button/link hover & active states |
 | Primary light | `--color-primary-light` | `#F5EAE5` | `#3A2A22` | Active nav background tint, subtle highlight fills |
 | Secondary | `--color-secondary` | `#5E6B5B` Nordic Moss | `#8FA085` | Sidebar background, nav elements, secondary badges |
@@ -94,9 +95,9 @@ conflicts appendix).
 | Token | Light | Dark | Usage |
 |---|---|---|---|
 | `--color-text-primary` | `#20252B` Ink | `#F2EFEA` | Body text, headings, primary UI copy |
-| `--color-text-secondary` | `#807571` Warm Stone | `#A69C95` | Metadata, captions, timestamps, secondary labels |
+| `--color-text-secondary` (**SR-004: value corrected**) | `#6D6360` (was `#807571` raw Warm Stone) | `#A69C95` | Metadata, captions, timestamps, secondary labels. Raw Warm Stone measured **4.46:1 on white / 3.82:1 on `--color-bg-ai`** — both FAIL AA normal text (this is the exact violation axe found in `CardDescription`/`text-muted-foreground`). The darkened value measures **5.83:1 on white, 4.98:1 on `--color-bg-ai`** — both pass. `--color-neutral` (raw Warm Stone, unchanged, `#807571`/`#A69C95`) stays reserved for large text/icons/borders, mirroring `--color-primary` vs `--color-primary-text`. |
 | `--color-text-muted` | `#9CA3AF` | `#6B6F76` | Disabled state, placeholder text |
-| `--color-text-on-primary` | `#FFFFFF` | `#1A1108` | Text/icons on filled primary-color surfaces |
+| `--color-text-on-primary` | `#FFFFFF` | `#1A1108` | Text/icons on filled primary-color surfaces — pair with `--color-primary-text` for the fill, not raw `--color-primary` (see §7.3) |
 
 ### 2.4 Borders
 
@@ -136,6 +137,7 @@ Sales Coach methodology models.
 :root {
   /* Brand */
   --color-primary: #B86A4B;
+  --color-primary-text: #99583E; /* SR-004 — body-copy + button-fill safe, see §7.3 */
   --color-primary-hover: #A05A3D;
   --color-primary-light: #F5EAE5;
   --color-secondary: #5E6B5B;
@@ -153,7 +155,7 @@ Sales Coach methodology models.
 
   /* Text */
   --color-text-primary: #20252B;
-  --color-text-secondary: #807571;
+  --color-text-secondary: #6D6360; /* SR-004 — darkened Warm Stone, see §7.3 */
   --color-text-muted: #9CA3AF;
   --color-text-on-primary: #FFFFFF;
 
@@ -179,6 +181,7 @@ Sales Coach methodology models.
 
 [data-theme="dark"] {
   --color-primary: #D4856A;
+  --color-primary-text: #D4856A; /* SR-004 — dark mode already clears AA, mirrors --color-primary */
   --color-primary-hover: #E2A186;
   --color-primary-light: #3A2A22;
   --color-secondary: #8FA085;
@@ -218,16 +221,27 @@ Sales Coach methodology models.
 
 ### 2.8 Usage Rules
 
-- **Copper (`--color-primary`) is a heading/accent color, not a body-text color.** See
-  §7.3 for the contrast analysis — it must be reserved for large/bold text (≥18px or
-  ≥14px bold), icons, borders, and filled buttons with white text on top.
-- **Fjord Teal (`--color-tertiary`) follows the same rule** — reserved for headings,
-  icons, left-borders, and badges on the Expert Coach Insight block; not for
-  body-copy-sized text on light backgrounds.
+- **Copper (`--color-primary`) is a heading/accent color, not a body-text color, and not
+  a solid-button-fill color.** See §7.3 for the contrast analysis (**SR-004**,
+  corrected) — it must be reserved for large text (≥24px normal or ≥19px bold),
+  decorative borders, and non-text fills/icons (WCAG SC 1.4.11, 3:1). **Filled buttons
+  with white text on top must use `--color-primary-text` instead** — raw Copper only
+  measures 4.03:1 against white text, which fails the 4.5:1 normal-text threshold (the
+  DESIGN.md v1 claim that this pairing was "comfortably AA-compliant" was wrong and is
+  corrected here). Use `--color-primary-text` for any body-copy-sized text in the accent
+  hue too.
+- **Fjord Teal (`--color-tertiary`) follows the same large-text/border/icon-only rule**
+  as Copper — reserved for headings, icons, left-borders, and badges on the Expert Coach
+  Insight block; not for body-copy-sized text on light backgrounds. Unlike Copper, no
+  dedicated `--color-tertiary-text` token exists yet (no current usage renders it at
+  body size) — this is a known latent gap, flagged as a follow-up, not yet actioned as
+  part of SR-004 (see §7.3).
 - **Nordic Moss (`--color-secondary`)** is the sidebar/nav workhorse color — background
   tint and icon color for navigation, never the AI Response Block accent.
-- **Warm Stone (`--color-neutral`)** is the default secondary/metadata text color —
-  timestamps, captions, disabled labels.
+- **Warm Stone.** `--color-text-secondary` (**SR-004: value corrected**, see §2.3) is the
+  default secondary/metadata **body** text color — timestamps, captions, disabled
+  labels. `--color-neutral` (raw Warm Stone, unchanged) stays reserved for large
+  text/icons/borders only, mirroring the Copper split above.
 - Backgrounds are **never** pure `#FFFFFF` at the page level — only cards, inputs, and
   the sidebar-adjacent surface tier use white or near-white.
 - Semantic colors (`--color-success/warning/error/info`) are reserved for system
@@ -496,7 +510,7 @@ structured, scannable document card.
 
 | Variant | Style | Usage |
 |---|---|---|
-| Primary | `--color-primary` fill, `--color-text-on-primary` text, `--radius-md`, `--font-body` 700 | Main CTA per view/block (Save, Continue, Prepare next meeting) |
+| Primary | `--color-primary-text` fill (**SR-004: corrected from `--color-primary`** — raw Copper only measures 4.03:1 with white text, see §7.3), `--color-text-on-primary` text, `--radius-md`, `--font-body` 700 | Main CTA per view/block (Save, Continue, Prepare next meeting) |
 | Secondary | Transparent fill, `--color-border-strong` 1px outline, `--color-text-primary` text | Supporting actions (Back, Export Brief, Generate Email) |
 | Tertiary / Ghost | No border, `--color-text-secondary` text | Low-emphasis inline actions (helpful/regenerate feedback row) |
 | Destructive | `--color-error` fill or outline | Delete/remove actions only |
@@ -679,26 +693,59 @@ transitions, which must become instant (no fade/translate) under this preference
 
 ### 7.3 Color Contrast
 
-Computed against WCAG 2.1 relative-luminance contrast ratios:
+**SR-004 (this section corrected/expanded)** — axe (via `e2e/accessibility.spec.ts`,
+`@axe-core/playwright`) found 3 serious WCAG AA `color-contrast` violations on the login
+page, all traced to raw Copper/Warm Stone being used at body/button-label size. Every
+ratio below is computed with the WCAG 2.1 relative-luminance formula (see
+`src/features/theme/contrast.ts`, exercised by `src/features/theme/contrast.test.ts` —
+a pure-function unit test with no browser, so this cannot regress silently) — not
+eyeballed.
 
 | Foreground | Background | Ratio | AA normal text (4.5:1) | AA large text (3:1) |
 |---|---|---|---|---|
-| Copper `#B86A4B` | White `#FFFFFF` | ~4.0:1 | Fail | **Pass** |
-| Copper `#B86A4B` | Warm sand `#F0EDE6` | ~3.4:1 | Fail | **Pass** |
-| Fjord Teal `#258D85` | White `#FFFFFF` | ~4.0:1 | Fail | **Pass** |
-| Fjord Teal `#258D85` | Warm sand `#F0EDE6` | ~3.4:1 | Fail | **Pass** |
-| Nordic Moss `#5E6B5B` | White `#FFFFFF` | ~5.6:1 | **Pass** | Pass |
-| Ink `#20252B` | Warm off-white `#F7F5F0` | ~14.9:1 | **Pass** | Pass |
-| Warm Stone `#807571` | White `#FFFFFF` | ~4.5:1 | Borderline (≥14px only) | Pass |
+| Copper `#B86A4B` | White `#FFFFFF` | 4.03:1 | Fail | **Pass** |
+| Copper `#B86A4B` | Warm sand `#F0EDE6` | 3.45:1 | Fail | **Pass** |
+| White `#FFFFFF` (button label) | Copper `#B86A4B` (raw fill) | 4.03:1 | **Fail** | Pass |
+| **Primary text `#99583E`** (**new, SR-004**) | White `#FFFFFF` | **5.50:1** | **Pass** | Pass |
+| **Primary text `#99583E`** (**new, SR-004**) | Warm sand `#F0EDE6` | **4.70:1** | **Pass** | Pass |
+| White `#FFFFFF` (button label) | **Primary text `#99583E`** (fill, **SR-004**) | **5.50:1** | **Pass** | Pass |
+| Fjord Teal `#258D85` | White `#FFFFFF` | 4.02:1 | Fail | **Pass** |
+| Fjord Teal `#258D85` | Warm sand `#F0EDE6` | 3.44:1 | Fail | **Pass** |
+| Nordic Moss `#5E6B5B` | White `#FFFFFF` | 5.63:1 | **Pass** | Pass |
+| Ink `#20252B` | Warm off-white `#F7F5F0` | 14.16:1 | **Pass** | Pass |
+| Warm Stone `#807571` (raw, `--color-neutral`) | White `#FFFFFF` | 4.47:1 | **Fail** | Pass |
+| Warm Stone `#807571` (raw, `--color-neutral`) | Warm sand `#F0EDE6` | 3.82:1 | Fail | Pass |
+| **Text secondary `#6D6360`** (**darkened, SR-004**) | White `#FFFFFF` | **5.83:1** | **Pass** | Pass |
+| **Text secondary `#6D6360`** (**darkened, SR-004**) | Warm sand `#F0EDE6` | **4.98:1** | **Pass** | Pass |
 
-**Rule:** Copper and Fjord Teal meet AA only at **large-text size (≥18px, or ≥14px
-bold)** — exactly how they're used for AI Response Block section headings (`--text-lg`,
-700 weight). **Neither color may be used for body-copy-sized text (`--text-base`/15px
-and below) on white or warm-sand backgrounds** — use `--color-text-primary` (Ink) for
-all body copy, reserving copper/teal for headings, icons, borders, and filled buttons
-(white text on top, which is comfortably AA-compliant in both directions). Warm Stone
-is acceptable for secondary text at 14px+ but should step up to Ink for anything smaller
-or safety-critical (form errors, legal copy).
+**Rule (corrected, SR-004):** WCAG large text is **≥18pt (24px) at normal weight, or
+≥14pt (~19px) bold** — the previous "≥18px, or ≥14px bold" wording in this section was
+itself wrong (conflated pt/px) and partly caused the bug: several components used Copper
+at sizes that only *looked* like the documented "large text" case but never reached the
+real threshold. Copper and Fjord Teal meet AA only at that real large-text size — e.g.
+the AI Response Block's `--text-lg`/700-weight section headings (§5.3, a locked, signature
+design decision, deliberately exempted here) — and as decorative borders/non-text
+icons (WCAG SC 1.4.11, 3:1, already comfortably cleared).
+
+- **`#B86A4B` (`--color-primary`) must never be used for body copy or for a solid
+  button/link-style fill with text on top — use `--color-primary-text` (`#99583E`)
+  instead** for both cases. This single rule fixes all 3 axe violations: the login
+  page's `CardTitle` wordmark (body-size Copper text), the `GitHub`/`Microsoft 365`
+  button labels (white text on a raw-Copper fill), and — by the same pattern —
+  `meeting-brief.tsx`'s "Open saved brief" link.
+- **Warm Stone must never be used for body copy via `--color-neutral` directly** — use
+  `--color-text-secondary` (now `#6D6360`, corrected from raw `#807571`) instead, which
+  is exactly what `text-muted-foreground` already resolves to across the app (no
+  per-component sweep needed for this one — see `app/globals.css`).
+- Fjord Teal has the same large-text-only restriction as Copper but no dedicated
+  body-text-safe token yet exists (`--color-tertiary` has no `-text` variant) — flagged
+  as a follow-up, since no current usage renders it at body size (unlike Copper, which
+  did, on the login page).
+- `src/features/auth-page/login.tsx` is off-limits/read-only for this fix. Its
+  `CardTitle` wordmark span could not be edited directly, so the fix lives in
+  `app/globals.css` as a narrowly-scoped selector (`h3 span.text-primary`) targeting the
+  one DOM shape unique to that call site, rather than in the component itself — see the
+  comment above that rule in `app/globals.css` for the full reasoning.
 
 ### 7.4 Additional Rules
 
@@ -744,7 +791,7 @@ const theme = await getTenantTheme(tenantSlug)
 
 | Category | Overridable? | Notes |
 |---|---|---|
-| `--color-primary`, `--color-primary-hover`, `--color-primary-light` | ✅ Yes | Tenant brand color replaces Copper Fjord entirely |
+| `--color-primary`, `--color-primary-hover`, `--color-primary-light`, `--color-primary-text` | ✅ Yes | Tenant brand color replaces Copper Fjord entirely. **SR-004:** any tenant override must ship its own `--color-primary-text` too (a body-text/button-fill-safe darkened variant of the tenant's own hue, ≥4.5:1 against both white and the AI-block background) — the §8.3 theming-editor contrast guardrail should validate this pair, not just the raw `--color-primary` vs backgrounds. |
 | `--color-secondary` | ✅ Yes | Optional — tenants may keep Nordic Moss default |
 | `--color-tertiary` | ⚠️ Limited | Tenants may retint, but the AI Response Block's document-block anatomy (border-left + warm-sand-family background) must remain — only the hue may shift |
 | `--color-bg-ai` | ⚠️ Limited | Must remain a warm neutral distinct from `--color-bg-base`; cannot become pure white or a saturated brand color |

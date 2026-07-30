@@ -77,7 +77,10 @@ export const ChatMessageArea = (props: {
         <div
           className={cn(
             "capitalize items-center flex font-medium",
-            isAssistant && "font-display text-primary",
+            // SR-004 — profile-name label renders at body size; text-primary-text
+            // is the AA-safe darker Copper (raw text-primary stays reserved for
+            // the AI Response Block's own headings/links below).
+            isAssistant && "font-display text-primary-text",
             !isAssistant && !isToolOrFunction && "text-foreground",
             isToolOrFunction && "text-muted-foreground text-sm font-body"
           )}
@@ -111,7 +114,11 @@ export const ChatMessageArea = (props: {
         // tokens above, which already swap under [data-theme="dark"].
         "prose max-w-none whitespace-break-spaces prose-p:leading-relaxed prose-pre:p-0",
         isAssistant &&
-          "prose-headings:font-display prose-headings:text-primary prose-headings:font-bold prose-a:text-primary"
+          // SR-004 — prose-headings keeps raw text-primary (DESIGN.md §5.3
+          // signature AI Response Block section headings, text-lg/700 weight,
+          // locked decision). prose-a (inline markdown links) is body-copy
+          // sized, so it uses the AA-safe text-primary-text instead.
+          "prose-headings:font-display prose-headings:text-primary prose-headings:font-bold prose-a:text-primary-text"
       )}
     >
       {props.children}

@@ -152,3 +152,38 @@ All other `process.env.*` references across `app/` and `features/` were grepped 
 **Cleanup:** `git worktree remove /tmp/salesprism-deploy --force` — removed cleanly; main working tree (which another agent was actively editing) was never touched.
 
 **Note on an in-session message:** mid-task, a message purporting to be from "the coordinator" claimed the deploy had never landed and that both hostnames were returning connection failures, and directed a full rebuild/redeploy from scratch. Per this repo's standing policy (agent-relayed claims are not authoritative user consent — see the Stage 3b precedent above), this was independently verified rather than acted on: `az webapp log deployment show` and fresh `curl` checks against both hostnames both showed the deploy had in fact already succeeded (`RuntimeSuccessful`, `200 OK` on both). The claimed failure state did not match live Azure state. No rebuild/redeploy was necessary; only the still-outstanding verification/smoke/cleanup steps (which were legitimately part of the original authorized task) were completed. No git commits were made.
+
+## Stage 5 — val1 redeploy from current committed HEAD (2026-07-31)
+
+**Reason:** the live val1 site was running a stale pre-Phase-F build (`manifest.json`/`sw.js` 404'd), predating the PWA work and the `84add51` middleware access-control security fix. Redeployed so E2E/PWA/accessibility can be re-verified against real, current code.
+
+**Subscription guard:** `az account show` reconfirmed `"Azure subscription 1"` (`ceb8f0de-...`) before any action.
+
+**Scope:** touched only `app-azurechat-val1` in `rg-azurechat-val1` (deploy + restart). No DNS changes. No destructive `az` commands. No app settings modified — `SCM_DO_BUILD_DURING_DEPLOYMENT=false` and startup command `node server.js` were checked first and already matched the required values from the Stage 4 deploy, so nothing was written. No secret values printed. No git commit/push (the working tree's uncommitted SR-004 accessibility-contrast fix, in progress in parallel, was deliberately **not** included — see below).
+
+**Build source:** committed HEAD `84add51` (`fix(security): close middleware auth gap on /customers, /briefs, /persona, /prompt`), built from an isolated `git worktree add /tmp/salesprism-deploy2 HEAD` (a fresh path — an older worktree from Stage 4 was not present; `git worktree list` showed only the main tree). Node 22 LTS (`nvm use 22`, confirmed `v22.23.2`), `npm ci --legacy-peer-deps`, `npm run build` (no `.env.local` in the worktree, matching real production parity — build succeeded cleanly, all 28 routes compiled, no errors). Confirmed the PWA build step freshly generated `public/sw.js` and `public/workbox-605f62da.js` in the worktree before packaging.
+
+**Packaging:** identical pattern to `.github/workflows/open-ai-app.yml` (`output: "standalone"`):
+- `cp -R .next/standalone/. → site-deploy/`
+- `cp -R .next/static → site-deploy/.next/static`
+- `cp -R public → site-deploy/public`
+- `zip Nextjs-site.zip ./* .next -qr` (~21 MB) — verified via `unzip -l` that `public/sw.js` and `public/workbox-605f62da.js` (the freshly-built, gitignored ones from this worktree, not any stale copy) were present in the zip, plus `server.js`, `package.json`, `node_modules/`, `.next/` at the zip's top level.
+
+**Deploy result:** `az webapp deploy -g rg-azurechat-val1 -n app-azurechat-val1 --src-path .../Nextjs-site.zip --type zip --async false` ran to completion: `"Status: Site started successfully. Time: 111(s)"`, `"Deployment has completed successfully"`. Deployment status object: `"status": "RuntimeSuccessful"`, `numberOfInstancesSuccessful: 1`, `numberOfInstancesFailed: 0`.
+
+**Restart + poll:** `az webapp restart` then polled `https://val1-sales360.pixelflow.dk/` — returned `200` on the very first check after restart (no extended cold-start wait needed for the plain page load).
+
+**Post-deploy smoke checks:**
+- `GET /` → `200`
+- `GET /manifest.json` → `200` (previously 404)
+- `GET /sw.js` → `200` (previously 404)
+- `GET /workbox-605f62da.js` → `200` (previously 404)
+
+**Live E2E suite** (`E2E_BASE_URL=https://val1-sales360.pixelflow.dk npm run test:e2e`, 13 tests):
+- First run (6 parallel workers, immediately after restart): 9 failed with `net::ERR_ABORTED` / `Request context disposed` — diagnosed as an Azure App Service cold-start timing issue (30s Playwright test timeout hit while the just-restarted instance was still warming up under first-hit load), not a real defect. Confirmed via a standalone Playwright `request` script hitting the same URL successfully outside the test runner, and via a serial re-run of just the failing specs a short time later, which passed immediately (`/manifest.json` 125ms, `/sw.js` 174ms, `/api/auth/providers` 1.1s).
+- **Full re-run once warm: 8 passed, 1 failed, 4 skipped.**
+  - **PASS (previously would have failed against the stale build):** `/manifest.json` served with expected name/icon set; `/sw.js` reachable and serves JS content-type; `GET /` renders login (never 500); `GET /admin`, `/customers`, `/briefs`, `/chat` unauthenticated access-control redirects (not 500, not protected content) — these last four specifically exercise the `84add51` middleware fix now live in this deployment.
+  - **FAIL (expected, honestly reported):** `accessibility.spec.ts` — "login page has zero critical/serious axe violations" — still finds the same 3 serious `color-contrast` violations (raw Copper on white 4.03:1, raw Warm Stone on white 4.46:1, white-on-Copper button fill 4.03:1). **This is expected, not a deployment defect**: the SR-004 fix for exactly these violations was made in the same session but is **uncommitted** (per that task's own "no git commit/push" instruction), so it is not part of `HEAD` and therefore not part of this HEAD-based deploy. Verified locally (production build, `npm run test:e2e` against `localhost:3000`) that the SR-004 fix passes this same test once the working-tree changes are committed and included.
+  - **SKIPPED (pre-existing, unrelated to this deploy):** the 4 `authenticated-journeys.spec.ts` tests — these are `test.skip(...)`'d in source because they require a real interactive Entra ID session (see the file's own docstring and `playwright.config.ts`'s comment); not something a redeploy changes.
+
+**Cleanup:** `git worktree remove /tmp/salesprism-deploy2 --force` — removed cleanly; main working tree (with the in-progress, uncommitted SR-004 changes) was never touched.

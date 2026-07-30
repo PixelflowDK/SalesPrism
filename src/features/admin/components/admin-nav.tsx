@@ -28,7 +28,7 @@ export const AdminNav = () => {
             className={cn(
               "flex min-h-[44px] items-center border-b-2 text-sm font-medium transition-colors",
               active
-                ? "border-primary text-primary"
+                ? "border-primary text-primary-text"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >

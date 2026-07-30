@@ -19,7 +19,7 @@ export default async function BriefDetailPage(props: Props) {
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-8 py-8">
-      <Link href="/briefs" className="text-sm text-muted-foreground hover:text-primary">
+      <Link href="/briefs" className="text-sm text-muted-foreground hover:text-primary-text">
         ← Meeting briefs
       </Link>
       <MeetingBrief brief={result.response.brief} briefId={result.response.id} variant="standalone" />

@@ -13,7 +13,13 @@ const buttonVariants = cva(
         // (Tailwind 3.3's alpha-channel extraction doesn't apply to plain
         // `var(--x)` color values, so `/90`-style modifiers on these would
         // silently no-op).
-        default: "bg-primary text-primary-foreground hover:bg-primary-hover",
+        // SR-004 — WCAG AA contrast fix: white button text on raw
+        // `bg-primary` (#b86a4b) measures only 4.03:1 (axe color-contrast,
+        // serious). `bg-primary-text` is the darkened, AA-safe Copper
+        // (5.50:1 with white text) — see src/app/globals.css. Hover keeps
+        // the existing `--color-primary-hover` value unchanged (already
+        // 5.22:1, no fix needed there).
+        default: "bg-primary-text text-primary-foreground hover:bg-primary-hover",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline:
@@ -21,7 +27,9 @@ const buttonVariants = cva(
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary-hover",
         ghost: "hover:bg-accent hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 hover:underline",
+        // SR-004 — this is always body-sized inline link text (never a
+        // heading context), so it uses the AA-safe text-primary-text too.
+        link: "text-primary-text underline-offset-4 hover:underline",
       },
       size: {
         default: "h-10 px-4 py-2",

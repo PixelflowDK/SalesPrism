@@ -121,7 +121,7 @@ export default async function AdminUsersPage(props: Props) {
             {filtered.map((user) => (
               <TableRow key={user.id}>
                 <TableCell className="font-medium">
-                  <Link href={`/admin/users/${user.id}`} className="hover:text-primary">
+                  <Link href={`/admin/users/${user.id}`} className="hover:text-primary-text">
                     {user.displayName}
                   </Link>
                 </TableCell>
@@ -130,7 +130,7 @@ export default async function AdminUsersPage(props: Props) {
                   <form action={setUserRoleAction.bind(null, user.id, user.role === "admin" ? "user" : "admin")}>
                     <button
                       type="submit"
-                      className="rounded-pill border border-border-strong px-2 py-1 font-mono text-xs uppercase tracking-[0.08em] hover:border-primary hover:text-primary"
+                      className="rounded-pill border border-border-strong px-2 py-1 font-mono text-xs uppercase tracking-[0.08em] hover:border-primary hover:text-primary-text"
                     >
                       {user.role}
                     </button>

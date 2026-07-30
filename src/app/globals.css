@@ -15,6 +15,21 @@
     --color-primary: #b86a4b;
     --color-primary-hover: #a05a3d;
     --color-primary-light: #f5eae5;
+    /* SR-004 — WCAG AA contrast fix. `--color-primary` (#b86a4b) only clears
+     * the 4.5:1 normal-text threshold at 4.03:1 on white / 3.45:1 on
+     * --color-bg-ai (#f0ede6) — both FAIL. It stays reserved for
+     * large text (>=24px normal or >=19px bold), decorative borders and
+     * non-text fills/icons (3:1 threshold, already comfortably cleared).
+     * `--color-primary-text` is the body-copy-safe darker Copper: also used
+     * as the solid-button background so white button labels clear AA too
+     * (raw `--color-primary` as a button fill only measures 4.03:1 with
+     * white text — see DESIGN.md §7.3 and src/features/ui/button.tsx).
+     * Measured (scripts/contrast-check.mjs): 5.50:1 on #ffffff, 4.70:1 on
+     * --color-bg-ai (#f0ede6). Never darken `--color-primary` itself for
+     * this — that would change the brand accent everywhere it's used as a
+     * border/fill/large heading.
+     */
+    --color-primary-text: #99583e;
     --color-secondary: #5e6b5b;
     --color-secondary-hover: #4c584a;
     --color-tertiary: #258d85;
@@ -30,7 +45,18 @@
 
     /* Text */
     --color-text-primary: #20252b;
-    --color-text-secondary: #807571;
+    /* SR-004 — WCAG AA contrast fix. Raw Warm Stone (#807571) measured
+     * 4.46:1 on white / 3.82:1 on --color-bg-ai — both FAIL the 4.5:1
+     * normal-text threshold (this is the exact value that failed axe's
+     * color-contrast check on the CardDescription login-page copy, which
+     * uses `text-muted-foreground` -> this token). `--color-text-secondary`
+     * is documented (DESIGN.md §2.3) as body-sized metadata/caption text, so
+     * we correct its value in place rather than adding a parallel token.
+     * Measured: 5.83:1 on #ffffff, 4.98:1 on --color-bg-ai (#f0ede6).
+     * `--color-neutral` (raw Warm Stone, unchanged) stays reserved for
+     * large text/icons/borders, mirroring `--color-primary`'s split.
+     */
+    --color-text-secondary: #6d6360;
     --color-text-muted: #9ca3af;
     --color-text-on-primary: #ffffff;
 
@@ -76,6 +102,11 @@
       --color-primary: #d4856a;
       --color-primary-hover: #e2a186;
       --color-primary-light: #3a2a22;
+      /* SR-004 — dark mode already clears AA (6.51:1 on --color-bg-base,
+       * 5.92:1 on --color-bg-surface, 6.53:1 as a button fill against
+       * --color-text-on-primary) so no separate darkened value is needed;
+       * this token exists for light/dark parity (see :root above). */
+      --color-primary-text: #d4856a;
       --color-secondary: #8fa085;
       --color-secondary-hover: #a3b399;
       --color-tertiary: #4fbdb3;
@@ -119,6 +150,9 @@
     --color-primary: #d4856a;
     --color-primary-hover: #e2a186;
     --color-primary-light: #3a2a22;
+    /* SR-004 — see :root and the prefers-color-scheme block above: dark
+     * mode already clears AA, so this mirrors --color-primary as-is. */
+    --color-primary-text: #d4856a;
     --color-secondary: #8fa085;
     --color-secondary-hover: #a3b399;
     --color-tertiary: #4fbdb3;
@@ -193,4 +227,45 @@
 
 .animate-ai-block-in {
   animation: ai-block-in 300ms ease-out;
+}
+
+/*
+ * SR-004 — WCAG AA contrast fix, shared-layer override for auth-page (READ-ONLY,
+ * off-limits — see CLAUDE.md / src/features/auth-page/).
+ *
+ * `features/auth-page/login.tsx` renders the product wordmark as
+ * `<span className="text-primary">` nested directly inside shadcn/ui's
+ * `CardTitle` (an `<h3>`, `features/ui/card.tsx`). login.tsx passes
+ * `className="text-2xl flex gap-2"` to CardTitle, and `cn()` (tailwind-merge)
+ * drops CardTitle's own conflicting `text-lg` utility in favor of it — so the
+ * actually-rendered element is `<h3 class="font-semibold tracking-tight
+ * text-2xl flex gap-2">` (confirmed via a built-server HTML fetch, not
+ * guessed from source). At 24px/600-weight, further scaled down to a
+ * measured 21px by the app-wide `text-sm` root scale (see app/layout.tsx
+ * <html>), this is below the AA large-text exemption (>=24px normal or
+ * >=19px bold as actually rendered), so raw --color-primary (4.03:1 on
+ * white — axe color-contrast, serious) fails.
+ *
+ * We cannot edit login.tsx to swap the class to `text-primary-text`, so this
+ * rule intercepts it at the shared CSS layer instead. Rather than matching on
+ * CardTitle's own utility classes (which tailwind-merge can silently change
+ * per call-site, as just demonstrated), it targets the DOM shape that is
+ * unique to this one call site in the whole codebase: a `--color-primary`
+ * span nested directly inside an `<h3>`. Every other raw-`text-primary`
+ * heading usage puts the class on the heading element itself, not a nested
+ * span (features/ui/hero.tsx's text-3xl h1; features/sales-coach/components
+ * /meeting-brief.tsx's text-lg font-bold AI Response Block section
+ * headings — DESIGN.md §5.3, locked decision) — so this rule does not
+ * affect those, or --color-primary used for backgrounds/borders/icons
+ * anywhere else. If a future call site legitimately needs a nested
+ * --color-primary span inside an h3 at a confirmed-compliant large size,
+ * give it a class this selector doesn't match (e.g. wrap in a non-h3
+ * element) rather than relying on this rule to skip it.
+ *
+ * This is a plain (unlayered) rule so it wins over Tailwind's own
+ * `@layer utilities` `.text-primary` rule regardless of build/source
+ * order (unlayered author rules always beat any @layer rule).
+ */
+h3 span.text-primary {
+  color: var(--color-primary-text);
 }

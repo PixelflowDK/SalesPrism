@@ -24,7 +24,7 @@ export const MenuLink: FC<MenuLinkProps> = (props) => {
         ButtonLinkVariant,
         "border-l-[3px]",
         isActive
-          ? "border-primary bg-primary-light text-primary font-medium"
+          ? "border-primary bg-primary-light text-primary-text font-medium"
           : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground"
       )}
       href={props.href}

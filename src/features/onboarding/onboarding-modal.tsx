@@ -81,7 +81,7 @@ export const OnboardingModal = () => {
 
         {step === 0 && (
           <div className="rounded-md border-l-[3px] border-primary bg-ai px-6 py-5">
-            <div className="flex items-center gap-2 text-primary">
+            <div className="flex items-center gap-2 text-primary-text">
               <Sparkles size={18} aria-hidden="true" />
               <p className="font-mono text-xs uppercase tracking-[0.1em]">What {AI_NAME} does</p>
             </div>
