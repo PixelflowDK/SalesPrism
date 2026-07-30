@@ -1,21 +1,24 @@
 {
-  "phase": "Stage 3b \u2014 validation deployment",
-  "lastCompletedTask": "Stage 1-2 baseline committed+pushed (f5085b1)",
+  "phase": "Stage 3b — validation deployment (blocked on user) / Stage 4 UI in flight",
+  "lastCompletedTask": "cosmosRegion reroute implemented + committed; Stage 3c complete; Phase C migration committed (9c24e46)",
   "branch": "develop",
-  "lastStableCommit": "f5085b1",
+  "lastStableCommit": "8daee24",
   "activeAgents": [
-    "design-md-worker",
-    "deploy-worker"
+    "stage4-ui-worker"
   ],
-  "blockers": [],
+  "blockers": [
+    "USER ACTION: delete the empty Failed-state validation Cosmos account (rg-azurechat-val1 / cosmos-azurechat-val1) — destructive az commands are classifier-blocked in auto mode; needed before redeploy r3",
+    "USER ACTION: the two role-assignment commands for the pipeline service principal (see resume.md) — same classifier block",
+    "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large (operator portal request, 2-5 days)"
+  ],
   "quotaGated": [
     "gpt-5.4",
     "gpt-5.5",
     "gpt-5-nano",
     "text-embedding-3-large"
   ],
-  "nextAction": "az deployment sub what-if + create for rg-azurechat-val1 (westeurope, B1, gpt-5.4-mini DZS)",
+  "nextAction": "Once the wedged Cosmos account is deleted: az deployment sub create --name val1-initial-r3-<ts> --location westeurope --template-file infra/main.bicep --parameters infra/environments/validation.bicepparam (cosmosRegion=northeurope), then a-f verification",
   "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
-  "approxCreditNote": "~5 sonnet worker runs + 1 haiku so far; Fable lead lean since cost-control instruction",
-  "updatedAt": "2026-07-30T17:55"
+  "approxCreditNote": "7 sonnet worker runs + 1 haiku so far; Fable lead in delegation mode; codex review queued",
+  "updatedAt": "2026-07-30T18:25"
 }
