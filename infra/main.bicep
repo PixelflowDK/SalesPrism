@@ -13,7 +13,7 @@ param companyName string
 param azureRegion string = 'northeurope'
 
 @description('Region for the Cosmos DB account only. Defaults to azureRegion; override when the primary region has Cosmos capacity constraints (both values remain EU per R1).')
-@allowed(['northeurope', 'westeurope'])
+@allowed(['northeurope', 'westeurope', 'swedencentral'])  // swedencentral: ADR-002 EU-only capacity fallback, Cosmos only
 param cosmosRegion string = azureRegion
 
 // ---------------------------------------------------------------------------
