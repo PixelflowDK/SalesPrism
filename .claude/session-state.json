@@ -1,1 +1,21 @@
-{"phase":"Stage 1-2 (audit/config/baseline)","lastCompletedTask":"ADR-001","branch":"develop","lastStableCommit":"5759fce","activeAgents":["docs-worker","nextjs-worker","infra-worker"],"blockers":[],"quotaGated":["gpt-5.4","gpt-5.5","gpt-5-nano","text-embedding-3-large"],"nextAction":"Commit Stage 1-2 baseline, then Stage 3 validation deployment","resumeCommand":"claude --continue (in /Users/hugosson/workspace/SalesPrism)","approxCreditNote":"Fable lead + 3 sonnet workers running; delegation mode active since cost-control instruction","updatedAt":"2026-07-30"}
+{
+  "phase": "Stage 3b \u2014 validation deployment",
+  "lastCompletedTask": "Stage 1-2 baseline committed+pushed (f5085b1)",
+  "branch": "develop",
+  "lastStableCommit": "f5085b1",
+  "activeAgents": [
+    "design-md-worker",
+    "deploy-worker"
+  ],
+  "blockers": [],
+  "quotaGated": [
+    "gpt-5.4",
+    "gpt-5.5",
+    "gpt-5-nano",
+    "text-embedding-3-large"
+  ],
+  "nextAction": "az deployment sub what-if + create for rg-azurechat-val1 (westeurope, B1, gpt-5.4-mini DZS)",
+  "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
+  "approxCreditNote": "~5 sonnet worker runs + 1 haiku so far; Fable lead lean since cost-control instruction",
+  "updatedAt": "2026-07-30T17:55"
+}
