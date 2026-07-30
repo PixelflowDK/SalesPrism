@@ -1,83 +1,100 @@
 import "server-only";
 
 import { DefaultAzureCredential, getBearerTokenProvider } from "@azure/identity";
+import {
+  AudioConfig,
+  AutoDetectSourceLanguageConfig,
+  ResultReason,
+  SpeechConfig,
+  SpeechRecognizer,
+  SpeechSynthesisOutputFormat,
+  SpeechSynthesizer,
+} from "microsoft-cognitiveservices-speech-sdk";
 
 /**
- * Azure AI Speech (STT) — server-side-only token issuance, SAD/backlog F-02.
+ * Azure AI Speech (STT + TTS) — server-side only, per
+ * docs/Sales_Prism_SAD_v2.7.md decisions log line 1376: "Azure AI Speech
+ * Service ... Implementeres som proxy via Next.js API route (audio ALDRIG
+ * direkte til Azure fra browser). Web Speech API fravalgt — audio routes
+ * til Google/Apple-servere (GDPR-brud)."
+ *
+ * SR-003 REMEDIATION (2026-07-30): a prior Phase F implementation issued a
+ * Microsoft Entra ID-backed Speech authorization token to the browser
+ * (`/api/speech/token`, now deleted) and opened a browser<->Azure WebSocket
+ * directly from the seller's laptop via the client-side Speech SDK. That
+ * contradicted the SAD-mandated proxy above. A prior escalation framed the
+ * fix as an infra gap — "the Speech account needs `publicNetworkAccess:
+ * Enabled`" — and that framing was WRONG; do not revisit it.
+ * `infra/modules/speech.bicep`'s `publicNetworkAccess: 'Disabled'` is
+ * CORRECT and stays exactly as-is: a customer's Private Endpoint is
+ * deliberately unreachable from outside that customer's VNet, and an
+ * external seller's browser was never supposed to be able to reach it —
+ * that unreachability IS the control, not a bug to route around.
+ *
+ * The actual fix is entirely on the app side: every call into Azure Speech
+ * now originates from THIS server module, which runs inside the
+ * VNet-integrated App Service (`vnetRouteAllEnabled: true` — see
+ * infra/modules/speech.bicep / the App Service network config), and which
+ * therefore CAN reach the Private Endpoint. The browser only ever talks to
+ * this app's own Route Handlers (`/api/speech/transcribe`,
+ * `/api/speech/synthesize`) over plain same-origin HTTPS — it never holds
+ * an Azure credential or a Speech Service token, and never opens a
+ * WebSocket to `*.cognitiveservices.azure.com` / `*.speech.microsoft.com`
+ * itself. See `transcribeAudio` / `synthesizeSpeech` below, and the client
+ * callers in `chat-input/speech/audio-recorder.ts` (STT) and
+ * `chat-input/speech/use-text-to-speech.ts` (TTS) — neither imports
+ * `microsoft-cognitiveservices-speech-sdk` at all anymore.
  *
  * Zero-secrets (CLAUDE.md / SAD R3): `AZURE_SPEECH_KEY` (subscription key)
- * must NEVER be read here or anywhere else in this app — DefaultAzureCredential
- * (managed identity) only, same as `azure-ai.ts` / `document-intelligence.ts`.
+ * must NEVER be read here or anywhere else in this app —
+ * `DefaultAzureCredential` (managed identity) only, same as `azure-ai.ts` /
+ * `document-intelligence.ts`.
  *
- * Env var contract (all three set together by infra/modules/speech.bicep,
- * committed 2026-07-30 — see that module for the resource definition):
- *  - `AZURE_SPEECH_REGION` (required) — e.g. "westeurope". Kept for display/
- *    diagnostics and as the input to `SpeechConfig.fromAuthorizationToken`'s
- *    region-only fallback path (see client callers) if `AZURE_SPEECH_ENDPOINT`
- *    is ever absent on an older deployment.
- *  - `AZURE_SPEECH_RESOURCE_ID` (required) — the full ARM resource id of the
- *    Speech resource, e.g.
- *    `/subscriptions/{sub}/resourceGroups/rg-azurechat-{slug}/providers/Microsoft.CognitiveServices/accounts/speech-azurechat-{slug}`.
- *    Required to compose the Microsoft Entra ID ("aad#") authorization token
- *    format the Speech SDK expects (see `buildSpeechAuthToken` below) — a
- *    bare AAD bearer token is NOT sufficient on its own for this SDK.
- *  - `AZURE_SPEECH_ENDPOINT` (required) — the Speech account's own endpoint
- *    (`speechAccount.properties.endpoint` in Bicep), reflecting the
- *    `customSubDomainName` set on the resource. The Speech JS SDK's
- *    region-only constructors (`SpeechConfig.fromAuthorizationToken(token,
- *    region)`) build a *generic* `wss://{region}.stt.speech.microsoft.com`
- *    endpoint that does not resolve for a custom-subdomain account — client
- *    callers MUST prefer `SpeechConfig.fromEndpoint(new URL(endpoint), "")`
- *    + `.authorizationToken = token` instead (the SDK's own documented
- *    pattern for combining a custom endpoint with token auth), falling back
- *    to the region-only constructor only if this env var is unset.
- *
- * KNOWN GOTCHA — flag for Kristjan / azure-infra-engineer, not fixed here
- * (infra/ is out of this file's ownership): `infra/modules/speech.bicep`
- * currently sets `publicNetworkAccess: 'Disabled'` on the Speech account.
- * STT in this app is a *browser-side* real-time SDK connection (the
- * seller's own laptop talks directly to Azure over a WebSocket — the
- * Node-side of this app only issues the auth token, see
- * `getSpeechAuthToken` below). A customer's Private Endpoint is only
- * reachable from within that customer's VNet; an external seller's browser
- * is not on the VNet and therefore CANNOT reach a `publicNetworkAccess:
- * Disabled` Speech account no matter what endpoint/token it is given. This
- * is an infra/architecture decision, not an app-code bug — resolving it
- * needs either (a) enabling public network access on the Speech account
- * (with compensating controls), or (b) building a server-side audio relay
- * through the VNet-integrated App Service. Until resolved, STT should be
- * assumed non-functional in any environment where the Speech resource is
- * actually deployed with today's Bicep.
+ * Env var contract (all three set together by infra/modules/speech.bicep):
+ *  - `AZURE_SPEECH_REGION` (required) — e.g. "westeurope".
+ *  - `AZURE_SPEECH_RESOURCE_ID` (required) — the full ARM resource id of
+ *    the Speech resource. Required to compose the Speech SDK's
+ *    "aad#<resourceId>#<AAD token>" authorization-token format (see
+ *    `buildServerSpeechConfig` below) — a bare AAD bearer token is not
+ *    sufficient on its own for this SDK.
+ *  - `AZURE_SPEECH_ENDPOINT` (required) — the Speech account's own
+ *    custom-subdomain endpoint. `SpeechConfig.fromEndpoint(new
+ *    URL(endpoint), "")` + `.authorizationToken = token` is the SDK's own
+ *    documented pattern for combining a custom endpoint with token auth
+ *    (the region-only `fromAuthorizationToken` constructor builds a
+ *    generic `wss://{region}.stt.speech.microsoft.com` endpoint that does
+ *    not resolve for a custom-subdomain account) — this is used as a
+ *    fallback only, for backward compatibility with an older deployment
+ *    that predates this env var.
  *
  * Until these env vars are set at all (Speech resource not yet provisioned
- * for a given customer), `isSpeechConfigured()` returns `false` and every
- * caller (the token route, the UI mic button) degrades gracefully rather
- * than erroring — see `src/app/(authenticated)/api/speech/token/route.ts`
- * and `src/features/chat-page/chat-input/speech/speech-availability-context.tsx`.
+ * for a given customer), `isSpeechConfigured()` returns `false` and both
+ * routes degrade to a 503 rather than erroring — see
+ * `speech-availability-context.tsx`, which hides/disables the mic button
+ * before either route is ever called.
  */
+
 const SPEECH_AAD_SCOPE = "https://cognitiveservices.azure.com/.default";
+
+/**
+ * Sales Coach 360 languages (backlog F-02 §"Teknisk implementation"):
+ * dansk, norsk, svensk, engelsk, tysk — this platform's actual Nordic B2B
+ * customer languages. Same list previously used by the (now deleted)
+ * client-side recognizer, now used server-side for auto language
+ * detection.
+ */
+const SUPPORTED_SPEECH_LANGUAGES = ["da-DK", "nb-NO", "sv-SE", "en-US", "de-DE"];
+
+/**
+ * How long a single-utterance recognize/synthesize call may run before
+ * this module gives up and surfaces an error — guards against a stalled
+ * Azure Speech WebSocket ever hanging a Route Handler request
+ * indefinitely.
+ */
+const SPEECH_CALL_TIMEOUT_MS = 20_000;
 
 export const isSpeechConfigured = (): boolean =>
   Boolean(process.env.AZURE_SPEECH_REGION && process.env.AZURE_SPEECH_RESOURCE_ID);
-
-export type SpeechAuthToken = {
-  /** Speech SDK "aad#<resourceId>#<AAD token>" authorization-token format. */
-  token: string;
-  region: string;
-  /**
-   * `AZURE_SPEECH_ENDPOINT`, when set — the custom-subdomain endpoint
-   * clients should prefer via `SpeechConfig.fromEndpoint()` (see module
-   * doc comment). `null` when unset, in which case callers fall back to
-   * the region-only `SpeechConfig.fromAuthorizationToken()` constructor.
-   */
-  endpoint: string | null;
-  /**
-   * Conservative client-side refresh hint. Microsoft Entra ID access tokens
-   * for this scope are normally valid ~60-75 minutes; recommend refreshing
-   * well before that so a long recording session never straddles expiry.
-   */
-  expiresInSeconds: number;
-};
 
 let cachedTokenProvider: (() => Promise<string>) | undefined;
 
@@ -89,24 +106,143 @@ const getTokenProvider = (): (() => Promise<string>) => {
 };
 
 /**
- * Issues a short-lived, Microsoft Entra ID-backed Speech authorization token.
- * Returns `null` when the Speech resource isn't configured yet — callers
- * MUST treat that as "feature unavailable", never as an error to surface
- * raw to the end user (see route handler for the 503 contract).
+ * Builds a server-side `SpeechConfig` authenticated via
+ * `DefaultAzureCredential`. This value never leaves this process — no
+ * Route Handler in this app ever serializes a `SpeechConfig`, an
+ * authorization token, or any Azure credential back to the client (see the
+ * module doc comment above).
  */
-export const getSpeechAuthToken = async (): Promise<SpeechAuthToken | null> => {
-  if (!isSpeechConfigured()) return null;
-
+const buildServerSpeechConfig = async (): Promise<SpeechConfig> => {
   const resourceId = process.env.AZURE_SPEECH_RESOURCE_ID!;
   const region = process.env.AZURE_SPEECH_REGION!;
   const endpoint = process.env.AZURE_SPEECH_ENDPOINT || null;
   const tokenProvider = getTokenProvider();
   const aadToken = await tokenProvider();
+  const authorizationToken = `aad#${resourceId}#${aadToken}`;
 
-  return {
-    token: `aad#${resourceId}#${aadToken}`,
-    region,
-    endpoint,
-    expiresInSeconds: 9 * 60, // conservative — matches the old STS-token lifetime this replaces
-  };
+  if (endpoint) {
+    const speechConfig = SpeechConfig.fromEndpoint(new URL(endpoint), "");
+    speechConfig.authorizationToken = authorizationToken;
+    return speechConfig;
+  }
+
+  return SpeechConfig.fromAuthorizationToken(authorizationToken, region);
+};
+
+const withTimeout = <T>(promise: Promise<T>, label: string): Promise<T> =>
+  Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} timed out`)), SPEECH_CALL_TIMEOUT_MS);
+      // Never keep the Node process alive solely for this guard timer.
+      if (typeof timer === "object" && "unref" in timer) (timer as NodeJS.Timeout).unref();
+    }),
+  ]);
+
+export type TranscribeOutcome = { outcome: "recognized"; text: string } | { outcome: "no-match" };
+
+/**
+ * Maps a raw speech-recognition result to an app-level outcome. Extracted
+ * as a standalone pure function — takes only primitives/the `ResultReason`
+ * enum, not a live SDK recognizer/result object — so it is unit-testable
+ * without opening a real WebSocket connection to Azure.
+ */
+export const mapRecognitionOutcome = (
+  reason: ResultReason,
+  text: string,
+  errorDetails?: string
+): TranscribeOutcome => {
+  if (reason === ResultReason.RecognizedSpeech) {
+    return { outcome: "recognized", text };
+  }
+  if (reason === ResultReason.NoMatch) {
+    return { outcome: "no-match" };
+  }
+  throw new Error(errorDetails || `Unexpected speech recognition result: ${ResultReason[reason]}`);
+};
+
+/**
+ * Transcribes a single pre-recorded utterance. `wavBuffer` MUST be a mono
+ * uncompressed PCM WAV file (see `audio-validation.ts` /
+ * `chat-input/speech/wav-encoder.ts`).
+ *
+ * `AudioConfig.fromWavFileInput(Buffer)` is the verified, Node-compatible
+ * entry point for this SDK version — checked directly against the
+ * installed `microsoft-cognitiveservices-speech-sdk@1.34.0` type
+ * declarations (`distrib/lib/src/sdk/Audio/AudioConfig.d.ts`) and smoke
+ * tested against a real Node `require()` of the package before this file
+ * was written (see PR description). Compressed formats (webm/opus, mp4,
+ * ...) are deliberately never sent here — decoding them server-side via
+ * this SDK requires a GStreamer install that is not verified as available
+ * on the Azure App Service Linux Node runtime; the browser already
+ * decodes+re-encodes to WAV before upload (`audio-recorder.ts`), so this
+ * server module never needs that dependency at all.
+ */
+export const transcribeAudio = async (wavBuffer: Buffer): Promise<TranscribeOutcome> => {
+  const speechConfig = await buildServerSpeechConfig();
+  const audioConfig = AudioConfig.fromWavFileInput(wavBuffer);
+  const autoDetectSourceLanguageConfig =
+    AutoDetectSourceLanguageConfig.fromLanguages(SUPPORTED_SPEECH_LANGUAGES);
+  const recognizer = SpeechRecognizer.FromConfig(
+    speechConfig,
+    autoDetectSourceLanguageConfig,
+    audioConfig
+  );
+
+  try {
+    const result = await withTimeout(
+      new Promise<{ reason: ResultReason; text: string; errorDetails?: string }>(
+        (resolve, reject) => {
+          recognizer.recognizeOnceAsync(
+            (r) => resolve({ reason: r.reason, text: r.text, errorDetails: r.errorDetails }),
+            (err) => reject(new Error(err))
+          );
+        }
+      ),
+      "Speech recognition"
+    );
+
+    return mapRecognitionOutcome(result.reason, result.text, result.errorDetails);
+  } finally {
+    recognizer.close();
+  }
+};
+
+/**
+ * Synthesizes `text` to MP3 audio bytes, entirely server-side. Passing no
+ * `AudioConfig` to `SpeechSynthesizer` (verified against
+ * `distrib/lib/src/sdk/SpeechSynthesizer.d.ts` and
+ * `SpeechSynthesisResult.d.ts`, and smoke tested with a real Node
+ * `require()`) is the SDK's documented way to receive the synthesized
+ * audio as an in-memory `ArrayBuffer` (`result.audioData`) instead of
+ * attempting to play it to a system speaker device — which doesn't exist
+ * on an App Service instance and would otherwise throw.
+ */
+export const synthesizeSpeech = async (text: string): Promise<Buffer> => {
+  const speechConfig = await buildServerSpeechConfig();
+  speechConfig.speechSynthesisOutputFormat = SpeechSynthesisOutputFormat.Audio16Khz32KBitRateMonoMp3;
+  const synthesizer = new SpeechSynthesizer(speechConfig);
+
+  try {
+    const result = await withTimeout(
+      new Promise<{ reason: ResultReason; audioData: ArrayBuffer; errorDetails?: string }>(
+        (resolve, reject) => {
+          synthesizer.speakTextAsync(
+            text,
+            (r) => resolve({ reason: r.reason, audioData: r.audioData, errorDetails: r.errorDetails }),
+            (err) => reject(new Error(err))
+          );
+        }
+      ),
+      "Speech synthesis"
+    );
+
+    if (result.reason !== ResultReason.SynthesizingAudioCompleted) {
+      throw new Error(result.errorDetails || "Speech synthesis did not complete.");
+    }
+
+    return Buffer.from(result.audioData);
+  } finally {
+    synthesizer.close();
+  }
 };

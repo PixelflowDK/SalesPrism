@@ -38,7 +38,7 @@ export const ChatInput = () => {
   const { loading, input, chatThreadId } = useChat();
   const { uploadButtonLabel } = useFileStore();
   const { isPlaying } = useTextToSpeech();
-  const { isMicrophoneReady } = useSpeechToText();
+  const { isMicrophoneReady, isTranscribing } = useSpeechToText();
   const speechAvailable = useSpeechAvailability();
   const { rows } = useChatInputDynamicHeight();
 
@@ -107,6 +107,7 @@ export const ChatInput = () => {
             isPlaying={isPlaying}
             stopPlaying={() => textToSpeechStore.stopPlaying()}
             isMicrophoneReady={isMicrophoneReady}
+            isTranscribing={isTranscribing}
             isAvailable={speechAvailable}
           />
           {loading === "loading" ? (

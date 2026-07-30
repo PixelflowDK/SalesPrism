@@ -1,6 +1,13 @@
 import { getToken } from "next-auth/jwt";
 import { NextRequest, NextResponse } from "next/server";
 
+// IMPORTANT: every entry here must ALSO appear in `config.matcher` below.
+// Middleware only executes for paths the matcher selects — an entry present
+// here but absent there is silently unenforced. That gap previously left
+// /customers, /briefs, /persona and /prompt without an auth check, so an
+// anonymous request reached server code that throws on the missing session
+// (a 500 instead of a login redirect). Caught by the E2E access-control spec;
+// keep the two lists in sync.
 const requireAuth: string[] = [
   "/chat",
   "/api",
@@ -9,6 +16,8 @@ const requireAuth: string[] = [
   "/persona",
   "/prompt",
   "/admin",
+  "/customers",
+  "/briefs",
 ];
 const requireAdmin: string[] = ["/reporting", "/admin"];
 
@@ -44,10 +53,18 @@ export const config = {
   matcher: [
     "/unauthorized/:path*",
     "/reporting/:path*",
-    "/api/chat:path*",
-    "/api/images:path*",
-    "/api/speech:path*",
+    "/api/chat/:path*",
+    "/api/chat",
+    "/api/images/:path*",
+    "/api/speech/:path*",
+    "/api/sales-coach/:path*",
     "/chat/:path*",
     "/admin/:path*",
+    "/customers/:path*",
+    "/customers",
+    "/briefs/:path*",
+    "/briefs",
+    "/persona/:path*",
+    "/prompt/:path*",
   ],
 };

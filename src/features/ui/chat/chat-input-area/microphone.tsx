@@ -1,5 +1,5 @@
 import { cn } from "@/ui/lib";
-import { Mic, MicOff, Square } from "lucide-react";
+import { Loader2, Mic, MicOff, Square } from "lucide-react";
 import { Button } from "../../button";
 import {
   Tooltip,
@@ -10,7 +10,10 @@ import {
 
 export const Microphone = (props: {
   isPlaying: boolean;
+  /** `true` while actively recording — see use-speech-to-text.ts. */
   isMicrophoneReady: boolean;
+  /** `true` while the recorded clip has been uploaded and is awaiting a transcript (SR-003: no more live interim results, so this is the only "something is happening" signal between release and text-in-input). */
+  isTranscribing: boolean;
   /** `false` when the Speech resource isn't configured for this workspace — see speech-availability-context.tsx. */
   isAvailable: boolean;
   stopPlaying: () => void;
@@ -54,6 +57,38 @@ export const Microphone = (props: {
     );
   }
 
+  // SR-003: there are no live interim results anymore (recognition happens
+  // server-side, once, after the recording is uploaded — see
+  // use-speech-to-text.ts), so this "transcribing" state is the honest
+  // stand-in between "release the mic" and "text lands in the input" —
+  // never silently pretend nothing is happening. `motion-safe:` keeps the
+  // spin off for prefers-reduced-motion; the button stays visibly disabled
+  // (not just static) regardless via `cursor-wait` + `aria-live`.
+  if (props.isTranscribing) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex" tabIndex={0}>
+              <Button
+                size="icon"
+                type="button"
+                variant="ghost"
+                disabled
+                aria-label="Transcribing your recording"
+                aria-live="polite"
+                className="min-h-[44px] min-w-[44px] cursor-wait"
+              >
+                <Loader2 size={16} aria-hidden="true" className="motion-safe:animate-spin" />
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Transcribing…</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
   return (
     <>
       {props.isPlaying ? (
@@ -75,13 +110,31 @@ export const Microphone = (props: {
           onMouseDown={startRecognition}
           onMouseUp={stopRecognition}
           onMouseLeave={stopRecognition}
+          onTouchStart={(e) => {
+            // Press-and-hold must also work on touch devices — mobile
+            // Safari/Chrome don't reliably synthesize mouse events from
+            // touch on a <button>. preventDefault stops the browser from
+            // ALSO firing a synthetic mousedown a moment later (which
+            // would otherwise start a second recording).
+            e.preventDefault();
+            startRecognition();
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            stopRecognition();
+          }}
           className={cn(
             "min-h-[44px] min-w-[44px]",
             props.isMicrophoneReady
-              ? "bg-destructive text-destructive-foreground hover:bg-destructive"
+              ? "bg-destructive text-destructive-foreground hover:bg-destructive motion-safe:animate-pulse"
               : ""
           )}
-          aria-label="Microphone for speech input"
+          aria-label={
+            props.isMicrophoneReady
+              ? "Recording — release to stop and transcribe"
+              : "Microphone for speech input"
+          }
+          aria-pressed={props.isMicrophoneReady}
         >
           <Mic size={16} aria-hidden="true" />
         </Button>

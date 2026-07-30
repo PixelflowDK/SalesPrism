@@ -3,7 +3,14 @@ const withPWA = require("@ducanh2912/next-pwa").default;
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
-  serverExternalPackages: ["@azure/storage-blob"],
+  // SR-003: `microsoft-cognitiveservices-speech-sdk` is now imported
+  // server-side too (azure-speech.ts — transcribeAudio/synthesizeSpeech),
+  // not just from client components. It ships a Node-specific websocket
+  // transport (`ws`) that only loads at runtime inside its own
+  // environment check (`typeof window`) — keeping it external avoids
+  // webpack trying to statically bundle/analyze that branch for the
+  // server build, same reasoning as `@azure/storage-blob` below.
+  serverExternalPackages: ["@azure/storage-blob", "microsoft-cognitiveservices-speech-sdk"],
 };
 
 /**
