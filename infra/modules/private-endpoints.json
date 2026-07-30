@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "66532516308293843"
+      "templateHash": "17048827572382090498"
     }
   },
   "parameters": {
@@ -37,6 +37,9 @@
       "type": "string"
     },
     "documentIntelligenceId": {
+      "type": "string"
+    },
+    "speechId": {
       "type": "string"
     },
     "openAiDnsZoneId": {
@@ -304,6 +307,47 @@
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-docintel-{0}', parameters('customerSlug')))]"
       ]
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2023-09-01",
+      "name": "[format('pe-speech-{0}', parameters('customerSlug'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[parameters('privateLinkSubnetId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "speech-connection",
+            "properties": {
+              "privateLinkServiceId": "[parameters('speechId')]",
+              "groupIds": [
+                "account"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2023-09-01",
+      "name": "[format('{0}/{1}', format('pe-speech-{0}', parameters('customerSlug')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "speech-config",
+            "properties": {
+              "privateDnsZoneId": "[parameters('cognitiveServicesDnsZoneId')]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateEndpoints', format('pe-speech-{0}', parameters('customerSlug')))]"
+      ]
     }
   ],
   "outputs": {
@@ -330,6 +374,10 @@
     "peDocIntelligenceId": {
       "type": "string",
       "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-docintel-{0}', parameters('customerSlug')))]"
+    },
+    "peSpeechId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-speech-{0}', parameters('customerSlug')))]"
     }
   }
 }

@@ -24,6 +24,7 @@ param cosmosId string
 param keyVaultId string
 param storageId string
 param documentIntelligenceId string
+param speechId string
 
 param openAiDnsZoneId string
 param aiSearchDnsZoneId string
@@ -248,9 +249,53 @@ resource peDocIntelligenceZoneGroup 'Microsoft.Network/privateEndpoints/privateD
   }
 }
 
+// Private Endpoint — Azure AI Speech (F-02, backlog). Speech is a
+// Microsoft.CognitiveServices/accounts kind ('SpeechServices') like Document
+// Intelligence above, so it shares the same groupId ('account') and the same
+// generic privatelink.cognitiveservices.azure.com zone — Speech does not have
+// its own dedicated private DNS zone (verified against Microsoft's private
+// endpoint DNS zone list for Cognitive Services accounts: OpenAI, AI Search,
+// and Bot Service each get a dedicated zone; every other Cognitive Services
+// kind, Speech included, resolves via privatelink.cognitiveservices.azure.com).
+resource peSpeech 'Microsoft.Network/privateEndpoints@2023-09-01' = {
+  name: 'pe-speech-${customerSlug}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: privateLinkSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'speech-connection'
+        properties: {
+          privateLinkServiceId: speechId
+          groupIds: ['account']
+        }
+      }
+    ]
+  }
+}
+
+resource peSpeechZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = {
+  name: 'default'
+  parent: peSpeech
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'speech-config'
+        properties: {
+          privateDnsZoneId: cognitiveServicesDnsZoneId
+        }
+      }
+    ]
+  }
+}
+
 output peOpenAiId string = peOpenAi.id
 output peAiSearchId string = peAiSearch.id
 output peCosmosDbId string = peCosmosDb.id
 output peKeyVaultId string = peKeyVault.id
 output peStorageId string = peStorage.id
 output peDocIntelligenceId string = peDocIntelligence.id
+output peSpeechId string = peSpeech.id

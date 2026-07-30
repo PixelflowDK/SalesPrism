@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "5120881381064071411"
+      "templateHash": "14264326466548872416"
     }
   },
   "parameters": {
@@ -29,6 +29,9 @@
     },
     "documentIntelligenceId": {
       "type": "string"
+    },
+    "speechId": {
+      "type": "string"
     }
   },
   "variables": {
@@ -37,7 +40,8 @@
     "roleSearchServiceContributor": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
     "roleKeyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
     "roleStorageBlobDataContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
-    "roleCognitiveServicesUser": "a97b65f3-24c7-4388-baec-2e87135dc908"
+    "roleCognitiveServicesUser": "a97b65f3-24c7-4388-baec-2e87135dc908",
+    "roleCognitiveServicesSpeechUser": "f2dc8367-1007-4938-bd23-fe263f013447"
   },
   "resources": [
     {
@@ -102,6 +106,17 @@
       "name": "[guid(parameters('documentIntelligenceId'), parameters('appServicePrincipalId'), variables('roleCognitiveServicesUser'))]",
       "properties": {
         "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roleCognitiveServicesUser'))]",
+        "principalId": "[parameters('appServicePrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', last(split(parameters('speechId'), '/')))]",
+      "name": "[guid(parameters('speechId'), parameters('appServicePrincipalId'), variables('roleCognitiveServicesSpeechUser'))]",
+      "properties": {
+        "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roleCognitiveServicesSpeechUser'))]",
         "principalId": "[parameters('appServicePrincipalId')]",
         "principalType": "ServicePrincipal"
       }

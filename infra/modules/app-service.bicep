@@ -54,6 +54,22 @@ param documentIntelligenceEndpoint string
 @description('Customer slug echoed back as TENANT_SLUG — src/features/theme/tenant-resolver.ts fallback when the Host header is not a recognized {slug}-sales360 subdomain.')
 param tenantSlug string
 
+// ---------------------------------------------------------------------------
+// F-02 — Azure AI Speech (STT). Contract defined here in the absence of a
+// merged src/app/(authenticated)/api/speech/ token route at the time of
+// writing — reconcile these three names with that route once it lands.
+// Audio never goes browser -> Azure directly; the API route proxies/issues a
+// short-lived Entra token, so no key is ever wired here (zero-secrets rule).
+// ---------------------------------------------------------------------------
+@description('Azure AI Speech region — proposed contract: AZURE_SPEECH_REGION, consumed by the speech token-issuing API route.')
+param speechRegion string
+
+@description('Azure AI Speech account full ARM resource ID — proposed contract: AZURE_SPEECH_RESOURCE_ID (never a key).')
+param speechResourceId string
+
+@description('Azure AI Speech account endpoint URL — proposed contract: AZURE_SPEECH_ENDPOINT.')
+param speechEndpoint string
+
 var planName = 'plan-azurechat-${customerSlug}'
 var appName = 'app-azurechat-${customerSlug}'
 
@@ -107,6 +123,9 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'AZURE_KEY_VAULT_NAME',             value: keyVaultName }
         { name: 'AZURE_STORAGE_ACCOUNT_NAME',       value: storageAccountName }
         { name: 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligenceEndpoint }
+        { name: 'AZURE_SPEECH_REGION',              value: speechRegion }
+        { name: 'AZURE_SPEECH_RESOURCE_ID',         value: speechResourceId }
+        { name: 'AZURE_SPEECH_ENDPOINT',            value: speechEndpoint }
         { name: 'USE_MANAGED_IDENTITIES',           value: 'true' }
         { name: 'TENANT_SLUG',                      value: tenantSlug }
         { name: 'NEXTAUTH_URL',                     value: nextAuthUrlPlaceholder }

@@ -102,6 +102,7 @@ var names = {
   documentIntelligence: 'docintel-azurechat-${customerSlug}'
   vnet:                 'vnet-azurechat-${customerSlug}'
   appInsights:          'appi-azurechat-${customerSlug}'
+  speech:               'speech-azurechat-${customerSlug}'  // F-02: extends SAD §25 naming table — see modules/speech.bicep header
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +205,20 @@ module docIntelligenceModule 'modules/document-intelligence.bicep' = {
   }
 }
 
+// F-02 — Azure AI Speech (STT). Co-located with the AI stack: uses aiRegion
+// (westeurope, ADR-001-pinned), not azureRegion, per SAD decisions log
+// requirement that Speech be EU-resident and co-located with the AI stack.
+module speechModule 'modules/speech.bicep' = {
+  name: 'deploy-speech-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [rgModule]
+  params: {
+    customerSlug: customerSlug
+    location:     aiRegion
+    tags:         tags
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 3. Networking — VNet + subnets only.
 // F2/F3 restructuring (codex-review-1): Private Endpoint creation moved to
@@ -244,7 +259,7 @@ module privateDnsModule 'modules/private-dns-zones.bicep' = {
 module privateEndpointsModule 'modules/private-endpoints.bicep' = {
   name: 'deploy-pe-${customerSlug}'
   scope: resourceGroup(names.resourceGroup)
-  dependsOn: [networkingModule, privateDnsModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule, docIntelligenceModule]
+  dependsOn: [networkingModule, privateDnsModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule, docIntelligenceModule, speechModule]
   params: {
     customerSlug:         customerSlug
     location:             azureRegion
@@ -256,6 +271,7 @@ module privateEndpointsModule 'modules/private-endpoints.bicep' = {
     keyVaultId:           keyVaultModule.outputs.keyVaultId
     storageId:            storageModule.outputs.storageId
     documentIntelligenceId: docIntelligenceModule.outputs.documentIntelligenceId
+    speechId:             speechModule.outputs.speechId
     openAiDnsZoneId:            privateDnsModule.outputs.openAiDnsZoneId
     aiSearchDnsZoneId:          privateDnsModule.outputs.aiSearchDnsZoneId
     cosmosDnsZoneId:            privateDnsModule.outputs.cosmosDnsZoneId
@@ -310,6 +326,9 @@ module appServiceModule 'modules/app-service.bicep' = {
     storageAccountName:            storageModule.outputs.storageName
     documentIntelligenceEndpoint:  docIntelligenceModule.outputs.documentIntelligenceEndpoint
     tenantSlug:                    customerSlug
+    speechRegion:                  speechModule.outputs.speechRegion
+    speechResourceId:              speechModule.outputs.speechId
+    speechEndpoint:                speechModule.outputs.speechEndpoint
   }
 }
 
@@ -319,7 +338,7 @@ module appServiceModule 'modules/app-service.bicep' = {
 module rbacModule 'modules/rbac.bicep' = {
   name: 'deploy-rbac-${customerSlug}'
   scope: resourceGroup(names.resourceGroup)
-  dependsOn: [appServiceModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule, docIntelligenceModule]
+  dependsOn: [appServiceModule, openAiModule, aiSearchModule, cosmosModule, keyVaultModule, storageModule, docIntelligenceModule, speechModule]
   params: {
     appServicePrincipalId:   appServiceModule.outputs.appServicePrincipalId
     openAiId:                openAiModule.outputs.openAiId
@@ -328,6 +347,7 @@ module rbacModule 'modules/rbac.bicep' = {
     keyVaultId:              keyVaultModule.outputs.keyVaultId
     storageId:               storageModule.outputs.storageId
     documentIntelligenceId:  docIntelligenceModule.outputs.documentIntelligenceId
+    speechId:                speechModule.outputs.speechId
   }
 }
 
@@ -346,3 +366,5 @@ output storageName            string = storageModule.outputs.storageName
 output documentIntelligenceEndpoint string = docIntelligenceModule.outputs.documentIntelligenceEndpoint
 output logAnalyticsWorkspaceId string = observabilityModule.outputs.logAnalyticsWorkspaceId
 output appInsightsId           string = observabilityModule.outputs.appInsightsId
+output speechEndpoint          string = speechModule.outputs.speechEndpoint
+output speechRegion            string = speechModule.outputs.speechRegion

@@ -8,6 +8,7 @@ param cosmosId string
 param keyVaultId string
 param storageId string
 param documentIntelligenceId string
+param speechId string
 
 // Cognitive Services OpenAI User
 var roleOpenAiUser = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
@@ -21,6 +22,8 @@ var roleKeyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
 var roleStorageBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 // Cognitive Services User
 var roleCognitiveServicesUser = 'a97b65f3-24c7-4388-baec-2e87135dc908'
+// Cognitive Services Speech User — verified via `az role definition list --name "Cognitive Services Speech User" --query "[0].name" -o tsv`
+var roleCognitiveServicesSpeechUser = 'f2dc8367-1007-4938-bd23-fe263f013447'
 
 resource openAiResource 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' existing = {
   name: last(split(openAiId, '/'))
@@ -44,6 +47,10 @@ resource docIntelligenceResource 'Microsoft.CognitiveServices/accounts@2023-10-0
 
 resource cosmosResource 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview' existing = {
   name: last(split(cosmosId, '/'))
+}
+
+resource speechResource 'Microsoft.CognitiveServices/accounts@2023-10-01-preview' existing = {
+  name: last(split(speechId, '/'))
 }
 
 // 1. OpenAI — Cognitive Services OpenAI User
@@ -112,7 +119,18 @@ resource raDocIntelligence 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
-// 7. Cosmos DB — built-in data-plane SQL role (Cosmos DB Built-in Data Contributor)
+// 7. Speech — Cognitive Services Speech User (F-02, backlog)
+resource raSpeech 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(speechId, appServicePrincipalId, roleCognitiveServicesSpeechUser)
+  scope: speechResource
+  properties: {
+    roleDefinitionId: resourceId('Microsoft.Authorization/roleDefinitions', roleCognitiveServicesSpeechUser)
+    principalId: appServicePrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// 8. Cosmos DB — built-in data-plane SQL role (Cosmos DB Built-in Data Contributor)
 resource raCosmosDataPlane 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-02-15-preview' = {
   name: guid(cosmosId, appServicePrincipalId, '00000000-0000-0000-0000-000000000002')
   parent: cosmosResource

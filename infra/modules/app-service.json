@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13142147257486832755"
+      "templateHash": "1491133130818889353"
     }
   },
   "parameters": {
@@ -101,6 +101,24 @@
       "metadata": {
         "description": "Customer slug echoed back as TENANT_SLUG — src/features/theme/tenant-resolver.ts fallback when the Host header is not a recognized {slug}-sales360 subdomain."
       }
+    },
+    "speechRegion": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure AI Speech region — proposed contract: AZURE_SPEECH_REGION, consumed by the speech token-issuing API route."
+      }
+    },
+    "speechResourceId": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure AI Speech account full ARM resource ID — proposed contract: AZURE_SPEECH_RESOURCE_ID (never a key)."
+      }
+    },
+    "speechEndpoint": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure AI Speech account endpoint URL — proposed contract: AZURE_SPEECH_ENDPOINT."
+      }
     }
   },
   "variables": {
@@ -183,6 +201,18 @@
             {
               "name": "AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT",
               "value": "[parameters('documentIntelligenceEndpoint')]"
+            },
+            {
+              "name": "AZURE_SPEECH_REGION",
+              "value": "[parameters('speechRegion')]"
+            },
+            {
+              "name": "AZURE_SPEECH_RESOURCE_ID",
+              "value": "[parameters('speechResourceId')]"
+            },
+            {
+              "name": "AZURE_SPEECH_ENDPOINT",
+              "value": "[parameters('speechEndpoint')]"
             },
             {
               "name": "USE_MANAGED_IDENTITIES",

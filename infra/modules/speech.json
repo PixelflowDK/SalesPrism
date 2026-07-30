@@ -1,0 +1,61 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "37833790951694485"
+    }
+  },
+  "parameters": {
+    "customerSlug": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "object"
+    }
+  },
+  "variables": {
+    "accountName": "[format('speech-azurechat-{0}', parameters('customerSlug'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2023-10-01-preview",
+      "name": "[variables('accountName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "kind": "SpeechServices",
+      "sku": {
+        "name": "S0"
+      },
+      "properties": {
+        "publicNetworkAccess": "Disabled",
+        "disableLocalAuth": true,
+        "customSubDomainName": "[variables('accountName')]"
+      }
+    }
+  ],
+  "outputs": {
+    "speechId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
+    },
+    "speechName": {
+      "type": "string",
+      "value": "[variables('accountName')]"
+    },
+    "speechEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('accountName')), '2023-10-01-preview').endpoint]"
+    },
+    "speechRegion": {
+      "type": "string",
+      "value": "[parameters('location')]"
+    }
+  }
+}

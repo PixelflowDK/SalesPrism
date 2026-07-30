@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "8417996343893501006"
+      "templateHash": "2063001925011272680"
     }
   },
   "parameters": {
@@ -190,7 +190,8 @@
       "storage": "[format('st{0}', parameters('customerSlug'))]",
       "documentIntelligence": "[format('docintel-azurechat-{0}', parameters('customerSlug'))]",
       "vnet": "[format('vnet-azurechat-{0}', parameters('customerSlug'))]",
-      "appInsights": "[format('appi-azurechat-{0}', parameters('customerSlug'))]"
+      "appInsights": "[format('appi-azurechat-{0}', parameters('customerSlug'))]",
+      "speech": "[format('speech-azurechat-{0}', parameters('customerSlug'))]"
     },
     "tags": {
       "customer": "[parameters('customerSlug')]",
@@ -942,6 +943,93 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
+      "name": "[format('deploy-speech-{0}', parameters('customerSlug'))]",
+      "resourceGroup": "[variables('names').resourceGroup]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "customerSlug": {
+            "value": "[parameters('customerSlug')]"
+          },
+          "location": {
+            "value": "[parameters('aiRegion')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "37833790951694485"
+            }
+          },
+          "parameters": {
+            "customerSlug": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            }
+          },
+          "variables": {
+            "accountName": "[format('speech-azurechat-{0}', parameters('customerSlug'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2023-10-01-preview",
+              "name": "[variables('accountName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "kind": "SpeechServices",
+              "sku": {
+                "name": "S0"
+              },
+              "properties": {
+                "publicNetworkAccess": "Disabled",
+                "disableLocalAuth": true,
+                "customSubDomainName": "[variables('accountName')]"
+              }
+            }
+          ],
+          "outputs": {
+            "speechId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
+            },
+            "speechName": {
+              "type": "string",
+              "value": "[variables('accountName')]"
+            },
+            "speechEndpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('accountName')), '2023-10-01-preview').endpoint]"
+            },
+            "speechRegion": {
+              "type": "string",
+              "value": "[parameters('location')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[subscriptionResourceId('Microsoft.Resources/deployments', format('deploy-rg-{0}', parameters('customerSlug')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
       "name": "[format('deploy-networking-{0}', parameters('customerSlug'))]",
       "resourceGroup": "[variables('names').resourceGroup]",
       "properties": {
@@ -1197,6 +1285,9 @@
           "documentIntelligenceId": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-docintel-{0}', parameters('customerSlug'))), '2025-04-01').outputs.documentIntelligenceId.value]"
           },
+          "speechId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug'))), '2025-04-01').outputs.speechId.value]"
+          },
           "openAiDnsZoneId": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug'))), '2025-04-01').outputs.openAiDnsZoneId.value]"
           },
@@ -1223,7 +1314,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "66532516308293843"
+              "templateHash": "17048827572382090498"
             }
           },
           "parameters": {
@@ -1255,6 +1346,9 @@
               "type": "string"
             },
             "documentIntelligenceId": {
+              "type": "string"
+            },
+            "speechId": {
               "type": "string"
             },
             "openAiDnsZoneId": {
@@ -1522,6 +1616,47 @@
               "dependsOn": [
                 "[resourceId('Microsoft.Network/privateEndpoints', format('pe-docintel-{0}', parameters('customerSlug')))]"
               ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-09-01",
+              "name": "[format('pe-speech-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateLinkSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "speech-connection",
+                    "properties": {
+                      "privateLinkServiceId": "[parameters('speechId')]",
+                      "groupIds": [
+                        "account"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-09-01",
+              "name": "[format('{0}/{1}', format('pe-speech-{0}', parameters('customerSlug')), 'default')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "speech-config",
+                    "properties": {
+                      "privateDnsZoneId": "[parameters('cognitiveServicesDnsZoneId')]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', format('pe-speech-{0}', parameters('customerSlug')))]"
+              ]
             }
           ],
           "outputs": {
@@ -1548,6 +1683,10 @@
             "peDocIntelligenceId": {
               "type": "string",
               "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-docintel-{0}', parameters('customerSlug')))]"
+            },
+            "peSpeechId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Network/privateEndpoints', format('pe-speech-{0}', parameters('customerSlug')))]"
             }
           }
         }
@@ -1560,6 +1699,7 @@
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-networking-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-privatedns-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug')))]"
       ]
     },
@@ -1744,6 +1884,15 @@
           },
           "tenantSlug": {
             "value": "[parameters('customerSlug')]"
+          },
+          "speechRegion": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug'))), '2025-04-01').outputs.speechRegion.value]"
+          },
+          "speechResourceId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug'))), '2025-04-01').outputs.speechId.value]"
+          },
+          "speechEndpoint": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug'))), '2025-04-01').outputs.speechEndpoint.value]"
           }
         },
         "template": {
@@ -1753,7 +1902,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "13142147257486832755"
+              "templateHash": "1491133130818889353"
             }
           },
           "parameters": {
@@ -1849,6 +1998,24 @@
               "metadata": {
                 "description": "Customer slug echoed back as TENANT_SLUG — src/features/theme/tenant-resolver.ts fallback when the Host header is not a recognized {slug}-sales360 subdomain."
               }
+            },
+            "speechRegion": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure AI Speech region — proposed contract: AZURE_SPEECH_REGION, consumed by the speech token-issuing API route."
+              }
+            },
+            "speechResourceId": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure AI Speech account full ARM resource ID — proposed contract: AZURE_SPEECH_RESOURCE_ID (never a key)."
+              }
+            },
+            "speechEndpoint": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure AI Speech account endpoint URL — proposed contract: AZURE_SPEECH_ENDPOINT."
+              }
             }
           },
           "variables": {
@@ -1933,6 +2100,18 @@
                       "value": "[parameters('documentIntelligenceEndpoint')]"
                     },
                     {
+                      "name": "AZURE_SPEECH_REGION",
+                      "value": "[parameters('speechRegion')]"
+                    },
+                    {
+                      "name": "AZURE_SPEECH_RESOURCE_ID",
+                      "value": "[parameters('speechResourceId')]"
+                    },
+                    {
+                      "name": "AZURE_SPEECH_ENDPOINT",
+                      "value": "[parameters('speechEndpoint')]"
+                    },
+                    {
                       "name": "USE_MANAGED_IDENTITIES",
                       "value": "true"
                     },
@@ -1986,6 +2165,7 @@
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-observability-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-pe-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug')))]"
       ]
     },
@@ -2020,6 +2200,9 @@
           },
           "documentIntelligenceId": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-docintel-{0}', parameters('customerSlug'))), '2025-04-01').outputs.documentIntelligenceId.value]"
+          },
+          "speechId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug'))), '2025-04-01').outputs.speechId.value]"
           }
         },
         "template": {
@@ -2029,7 +2212,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "5120881381064071411"
+              "templateHash": "14264326466548872416"
             }
           },
           "parameters": {
@@ -2053,6 +2236,9 @@
             },
             "documentIntelligenceId": {
               "type": "string"
+            },
+            "speechId": {
+              "type": "string"
             }
           },
           "variables": {
@@ -2061,7 +2247,8 @@
             "roleSearchServiceContributor": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
             "roleKeyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
             "roleStorageBlobDataContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
-            "roleCognitiveServicesUser": "a97b65f3-24c7-4388-baec-2e87135dc908"
+            "roleCognitiveServicesUser": "a97b65f3-24c7-4388-baec-2e87135dc908",
+            "roleCognitiveServicesSpeechUser": "f2dc8367-1007-4938-bd23-fe263f013447"
           },
           "resources": [
             {
@@ -2131,6 +2318,17 @@
               }
             },
             {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', last(split(parameters('speechId'), '/')))]",
+              "name": "[guid(parameters('speechId'), parameters('appServicePrincipalId'), variables('roleCognitiveServicesSpeechUser'))]",
+              "properties": {
+                "roleDefinitionId": "[resourceId('Microsoft.Authorization/roleDefinitions', variables('roleCognitiveServicesSpeechUser'))]",
+                "principalId": "[parameters('appServicePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
               "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
               "apiVersion": "2024-02-15-preview",
               "name": "[format('{0}/{1}', last(split(parameters('cosmosId'), '/')), guid(parameters('cosmosId'), parameters('appServicePrincipalId'), '00000000-0000-0000-0000-000000000002'))]",
@@ -2150,6 +2348,7 @@
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-docintel-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug')))]"
       ]
     }
@@ -2202,6 +2401,14 @@
     "appInsightsId": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-observability-{0}', parameters('customerSlug'))), '2025-04-01').outputs.appInsightsId.value]"
+    },
+    "speechEndpoint": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug'))), '2025-04-01').outputs.speechEndpoint.value]"
+    },
+    "speechRegion": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug'))), '2025-04-01').outputs.speechRegion.value]"
     }
   }
 }
