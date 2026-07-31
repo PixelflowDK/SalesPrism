@@ -11,6 +11,12 @@
  * ogg). That keeps this parser simple and keeps the server from ever
  * needing a codec/GStreamer dependency that isn't verified as available on
  * the Azure App Service Linux Node runtime.
+ *
+ * `readCappedBody` (CR2-1 remediation, below) is the one export here that
+ * does I/O — it reads the raw `Request.body` stream with a hard byte cap so
+ * the route never has to fully buffer an oversized/unbounded upload before
+ * rejecting it. Still no Azure dependency, still colocated here because
+ * it's the same "abuse surface" concern as the rest of this module.
  */
 
 /** 10MB — generous for a ~2 minute mono 16-bit/16kHz WAV recording (see MAX_AUDIO_DURATION_SECONDS), tight enough to bound a single abusive upload. */
@@ -167,3 +173,75 @@ export const validateAudioUpload = (buffer: Buffer): AudioValidationResult => {
  */
 export const isDeclaredContentLengthTooLarge = (contentLength: number): boolean =>
   Number.isFinite(contentLength) && contentLength > MAX_AUDIO_UPLOAD_BYTES;
+
+export type CappedBodyReadResult =
+  | { ok: true; buffer: Buffer }
+  | {
+      ok: false;
+      status: 413;
+      code: "audio_too_large";
+      message: string;
+      /** Bytes actually pulled off the stream before the read was aborted — always close to `maxBytes`, never the full (possibly much larger) body. Exposed for tests to assert the abort happened early rather than only checking the final status. */
+      bytesReadBeforeAbort: number;
+    };
+
+/**
+ * Codex review round 2, CR2-1 (HIGH) remediation. `isDeclaredContentLengthTooLarge`
+ * above is a fast-path only — a client can omit or lie about `Content-Length`
+ * — so it must never be the sole size guard. Previously the route trusted
+ * that hint and then did a single `await req.arrayBuffer()`, which fully
+ * buffers the *entire* request body into memory before `validateAudioUpload`
+ * ever runs its own `buffer.length` check. An authenticated seller (this
+ * route requires a session) could omit/lie about `Content-Length` and
+ * stream an arbitrarily large body, exhausting App Service memory before
+ * the 413 is ever returned — a tenant-level DoS.
+ *
+ * This reads the body as a stream instead, accumulating chunks and
+ * checking the running total after every chunk. As soon as the total
+ * exceeds `maxBytes` it cancels the underlying reader/stream immediately
+ * (never reads further) and returns a 413 result without ever holding more
+ * than `maxBytes` + one chunk in memory — the oversized remainder of the
+ * body is never buffered, matching or exceeding the guarantee the old
+ * `Content-Length` fast-path only provided for honest clients.
+ */
+export const readCappedBody = async (
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number
+): Promise<CappedBodyReadResult> => {
+  if (!body) {
+    return { ok: true, buffer: Buffer.alloc(0) };
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+
+    total += value.byteLength;
+    if (total > maxBytes) {
+      // Abort the read immediately — do NOT push this (or any further)
+      // chunk into `chunks`, so the oversized body is never assembled in
+      // memory. `cancel()` tells the underlying stream/connection to stop
+      // sending more data rather than let Node keep draining it.
+      await reader.cancel().catch(() => {
+        // Best-effort — a cancel() failure doesn't change the outcome here.
+      });
+      return {
+        ok: false,
+        status: 413,
+        code: "audio_too_large",
+        message: `Recording exceeds the ${Math.floor(maxBytes / (1024 * 1024))}MB limit.`,
+        bytesReadBeforeAbort: total,
+      };
+    }
+
+    chunks.push(value);
+  }
+
+  return { ok: true, buffer: Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))) };
+};

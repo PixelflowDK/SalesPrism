@@ -2,6 +2,7 @@ import { userHashedId } from "@/features/auth-page/helpers";
 import {
   isDeclaredContentLengthTooLarge,
   MAX_AUDIO_UPLOAD_BYTES,
+  readCappedBody,
   validateAudioUpload,
 } from "@/features/common/services/audio-validation";
 import { isSpeechConfigured, transcribeAudio } from "@/features/common/services/azure-speech";
@@ -29,10 +30,11 @@ export const runtime = "nodejs";
  *
  * Abuse surface: an unauthenticated-looking or oversized upload is
  * rejected as early as possible — `Content-Length` first (before reading
- * any body bytes), then the real `buffer.length` + WAV-duration check once
- * read (`audio-validation.ts` — a client can lie about/omit
- * `Content-Length`, so that header check is a fast-path only, never the
- * sole guard).
+ * any body bytes; a fast path only, since a client can lie about/omit it),
+ * then `readCappedBody` streams the body with a hard byte cap so an
+ * oversized upload is aborted mid-read instead of ever being fully
+ * buffered (CR2-1 remediation — see `audio-validation.ts`), and finally
+ * the WAV-duration check runs once the (now bounded) buffer is in hand.
  */
 export async function POST(req: Request): Promise<Response> {
   const requestId = newRequestId();
@@ -71,8 +73,14 @@ export async function POST(req: Request): Promise<Response> {
 
   let buffer: Buffer;
   try {
-    const arrayBuffer = await req.arrayBuffer();
-    buffer = Buffer.from(arrayBuffer);
+    const capped = await readCappedBody(req.body, MAX_AUDIO_UPLOAD_BYTES);
+    if (!capped.ok) {
+      return Response.json(
+        { error: true, code: capped.code, message: capped.message },
+        { status: capped.status }
+      );
+    }
+    buffer = capped.buffer;
   } catch {
     return Response.json(
       { error: true, code: "invalid_body", message: "Unable to read the uploaded audio." },

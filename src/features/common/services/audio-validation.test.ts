@@ -4,6 +4,7 @@ import {
   MAX_AUDIO_DURATION_SECONDS,
   MAX_AUDIO_UPLOAD_BYTES,
   parseWavHeader,
+  readCappedBody,
   validateAudioUpload,
 } from "./audio-validation";
 
@@ -141,5 +142,123 @@ describe("isDeclaredContentLengthTooLarge", () => {
 
   it("is false for a non-finite/garbage value (fail open on the header, real check happens on the real buffer)", () => {
     expect(isDeclaredContentLengthTooLarge(Number.NaN)).toBe(false);
+  });
+});
+
+describe("readCappedBody — CR2-1 (streamed oversized-upload DoS) remediation", () => {
+  /**
+   * A `ReadableStream` that never closes on its own — every `pull()` hands
+   * back another `chunkSize`-byte chunk, simulating an attacker streaming
+   * an effectively unbounded body. The only way this ever stops producing
+   * chunks is if the consumer cancels it, which is exactly what
+   * `readCappedBody` must do once the running total crosses `maxBytes`.
+   */
+  const makeUnboundedStream = (chunkSize: number) => {
+    let pullCount = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pullCount += 1;
+        controller.enqueue(new Uint8Array(chunkSize).fill(1));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    return { stream, getPullCount: () => pullCount, wasCancelled: () => cancelled };
+  };
+
+  it("returns the full buffer for a small body well under the cap", async () => {
+    const chunkSize = 100;
+    let sent = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) {
+          controller.close();
+          return;
+        }
+        sent = true;
+        controller.enqueue(new Uint8Array(chunkSize).fill(7));
+      },
+    });
+
+    const result = await readCappedBody(stream, 1000);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.buffer.length).toBe(chunkSize);
+    }
+  });
+
+  it("treats a null body as an empty, ok buffer", async () => {
+    const result = await readCappedBody(null, MAX_AUDIO_UPLOAD_BYTES);
+    expect(result).toEqual({ ok: true, buffer: Buffer.alloc(0) });
+  });
+
+  it("aborts as soon as the running total exceeds the cap, never draining the rest of an unbounded body", async () => {
+    const chunkSize = 1000; // 1KB per chunk
+    const maxBytes = 5000; // 5KB cap
+    const probe = makeUnboundedStream(chunkSize);
+
+    const result = await readCappedBody(probe.stream, maxBytes);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(413);
+      expect(result.code).toBe("audio_too_large");
+      // Bytes actually pulled before abort are close to the cap, not the
+      // effectively-infinite total this probe stream would produce if
+      // `readCappedBody` kept calling read() — this is the load-bearing
+      // assertion that the oversized body was never fully buffered.
+      expect(result.bytesReadBeforeAbort).toBeGreaterThan(maxBytes);
+      expect(result.bytesReadBeforeAbort).toBeLessThan(maxBytes + chunkSize * 2);
+    }
+
+    // A handful of chunks only — nowhere close to what draining the whole
+    // (unbounded) stream would require — and the stream was explicitly
+    // cancelled so the producer stops sending more bytes at all.
+    expect(probe.getPullCount()).toBeLessThanOrEqual(Math.ceil(maxBytes / chunkSize) + 1);
+    expect(probe.wasCancelled()).toBe(true);
+  });
+
+  it("rejects a body whose size lands exactly one byte over the cap", async () => {
+    const maxBytes = 10;
+    let sent = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) {
+          controller.close();
+          return;
+        }
+        sent = true;
+        controller.enqueue(new Uint8Array(maxBytes + 1).fill(0));
+      },
+    });
+
+    const result = await readCappedBody(stream, maxBytes);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.bytesReadBeforeAbort).toBe(maxBytes + 1);
+    }
+  });
+
+  it("accepts a body whose size lands exactly at the cap", async () => {
+    const maxBytes = 10;
+    let sent = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent) {
+          controller.close();
+          return;
+        }
+        sent = true;
+        controller.enqueue(new Uint8Array(maxBytes).fill(0));
+      },
+    });
+
+    const result = await readCappedBody(stream, maxBytes);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.buffer.length).toBe(maxBytes);
+    }
   });
 });

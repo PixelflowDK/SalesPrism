@@ -236,10 +236,50 @@ export const GetPerUserActivity = async (
   return { status: "OK", response: rows };
 };
 
+/**
+ * Codex review round 2, CR2-2 (HIGH) — CSV/spreadsheet formula injection.
+ * `displayName`/`email` are copied verbatim from the IdP on every login
+ * sync (`user-service.ts`'s `EnsureUserOnLogin`), so they are
+ * attacker-controlled: a hostile profile value like `=cmd|'/C calc'!A1`
+ * becomes live formula execution the moment an admin opens this export in
+ * Excel/Sheets/LibreOffice, which auto-evaluate a cell as a formula
+ * whenever its first character (after leading whitespace) is one of
+ * `= + - @`.
+ *
+ * Rule (applies to every STRING cell, in every export path that uses this
+ * helper): if the first non-whitespace character is `=`, `+`, `-`, or `@`,
+ * prefix the whole value with a single quote `'` before the normal
+ * comma/quote/newline quoting below. That forces spreadsheet apps to treat
+ * the cell as literal text instead of attempting to evaluate it — the
+ * standard OWASP CSV-injection mitigation.
+ *
+ * Deliberately NOT applied to JS `number` inputs (e.g. `daysSinceLastLogin:
+ * -5`, `promptsTotal`) — those are always server-computed counts, never
+ * copied from an IdP profile or any other user-authored source, so there is
+ * no injection surface to neutralize, and prefixing a real numeric column
+ * would corrupt it (a leading `'` makes spreadsheet apps read the cell as
+ * text, breaking sort/sum on that column for legitimate data). A negative
+ * count like `-5` therefore renders unprefixed, exactly as before; the
+ * neutralization only ever applies to `string` cells (including a string
+ * that happens to read "-5" — e.g. a hostile `displayName` — which IS
+ * prefixed, since it came from user-authored input).
+ */
+const FORMULA_TRIGGER_CHARS = new Set(["=", "+", "-", "@"]);
+
+const neutralizeFormulaPrefix = (str: string): string => {
+  const firstNonWhitespaceIndex = str.search(/\S/);
+  if (firstNonWhitespaceIndex === -1) return str; // empty or all-whitespace — nothing to neutralize
+  const firstChar = str[firstNonWhitespaceIndex];
+  if (!FORMULA_TRIGGER_CHARS.has(firstChar)) return str;
+  return `'${str}`;
+};
+
 // Exported (was module-private) so it can be unit-tested directly — no
-// behavior change. See activity-service.test.ts.
+// other behavior change beyond CR2-2's formula neutralization above. See
+// activity-service.test.ts.
 export const csvEscape = (value: string | number | null): string => {
-  const str = value === null ? "" : String(value);
+  if (value === null) return "";
+  const str = typeof value === "number" ? String(value) : neutralizeFormulaPrefix(value);
   if (/[",\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }

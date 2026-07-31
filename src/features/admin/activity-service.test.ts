@@ -36,3 +36,49 @@ describe("csvEscape", () => {
     expect(csvEscape("plain-value_123")).toBe("plain-value_123");
   });
 });
+
+// CR2-2 (HIGH) regression tests — CSV/spreadsheet formula injection.
+// `displayName`/`email` are IdP-controlled (synced verbatim on every login,
+// see user-service.ts's `EnsureUserOnLogin`), so a hostile profile value
+// starting with `=`, `+`, `-`, or `@` must never reach the exported CSV
+// unprefixed, or it becomes live formula execution when an admin opens the
+// export.
+describe("csvEscape — CR2-2 formula injection neutralization", () => {
+  it.each([
+    ["=", "=cmd|'/C calc'!A1", "'=cmd|'/C calc'!A1"],
+    ["+", "+1+1", "'+1+1"],
+    ["-", "-2+3+cmd|' /C calc'!A1", "'-2+3+cmd|' /C calc'!A1"],
+    ["@", "@SUM(1+1)", "'@SUM(1+1)"],
+  ])("prefixes a string cell starting with %s with a single quote", (_label, input, expected) => {
+    expect(csvEscape(input)).toBe(expected);
+  });
+
+  it.each([
+    ["leading space", " =cmd()", "' =cmd()"],
+    ["leading tab", "\t=cmd()", "'\t=cmd()"],
+    ["leading CR", "\r-cmd()", "'\r-cmd()"],
+  ])("also prefixes when the dangerous char is preceded by %s", (_label, input, expected) => {
+    expect(csvEscape(input)).toBe(expected);
+  });
+
+  it("still applies normal comma/quote/newline quoting on top of the formula prefix", () => {
+    expect(csvEscape("=SUM(A1, B1)")).toBe('"\'=SUM(A1, B1)"');
+  });
+
+  it("does not touch a string cell where the dangerous character isn't the first one", () => {
+    expect(csvEscape("Alice=Bob")).toBe("Alice=Bob");
+  });
+
+  it("leaves an all-whitespace string cell unprefixed (nothing to neutralize)", () => {
+    expect(csvEscape("   ")).toBe("   ");
+  });
+
+  it("documents the chosen rule for numeric-typed cells: a JS `number` like -5 is never prefixed (server-computed counts, not user-authored input)", () => {
+    expect(csvEscape(-5)).toBe("-5");
+    expect(csvEscape(5)).toBe("5");
+  });
+
+  it("DOES prefix a string cell that merely looks numeric (e.g. a hostile displayName of literally \"-5\") — the rule is type-based, not value-based", () => {
+    expect(csvEscape("-5")).toBe("'-5");
+  });
+});
