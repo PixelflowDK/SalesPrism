@@ -19,7 +19,13 @@ const requireAuth: string[] = [
   "/customers",
   "/briefs",
 ];
-const requireAdmin: string[] = ["/reporting", "/admin"];
+// "/admin" already covers the `/admin/*` UI. "/api/admin" is listed
+// separately because it does NOT start with "/admin" as a string prefix
+// (it starts with "/api") — without this entry, `/api/admin/...` routes
+// would pass the `requireAuth` session check (via the "/api" entry above)
+// but skip the admin-role check here, relying solely on each route's own
+// `requireAdminContext()` call. Defense in depth: keep both.
+const requireAdmin: string[] = ["/reporting", "/admin", "/api/admin"];
 
 export async function middleware(request: NextRequest) {
   const res = NextResponse.next();
@@ -58,6 +64,7 @@ export const config = {
     "/api/images/:path*",
     "/api/speech/:path*",
     "/api/sales-coach/:path*",
+    "/api/admin/:path*",
     "/chat/:path*",
     "/admin/:path*",
     "/customers/:path*",
