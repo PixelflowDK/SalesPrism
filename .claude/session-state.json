@@ -1,11 +1,10 @@
 {
-  "phase": "Stage 5c (Phase F) + Stage 6 (tests) in flight",
-  "lastCompletedTask": "val1 app deployed + auth wired; site live at https://val1-sales360.pixelflow.dk (200, azure-ad provider)",
+  "phase": "Stage 7 \u2014 review repair loops",
+  "lastCompletedTask": "C-1 CRITICAL workflow injection fixed (3c5e399); Codex round 2 fixed (d2f675a)",
   "branch": "develop",
-  "lastStableCommit": "084b974",
+  "lastStableCommit": "3c5e399",
   "activeAgents": [
-    "phaseF-worker",
-    "tests-worker"
+    "gdpr-erasure-worker"
   ],
   "blockers": [
     "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large (operator portal request, 2-5 days)"
@@ -22,6 +21,16 @@
   "nextAction": "Integrate Phase F + test suite, then Stage 7 reviews (security/GDPR/compliance/cost/Codex re-review)",
   "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
   "approxCreditNote": "7 sonnet worker runs + 1 haiku so far; Fable lead in delegation mode; codex review queued",
-  "updatedAt": "2026-07-30T20:05",
-  "leadModel": "Opus (switched from Fable 5 for cost)"
+  "updatedAt": "2026-07-31T09:00",
+  "leadModel": "Opus (switched from Fable 5 for cost)",
+  "openBlockers": {
+    "SR-001": "client secret -> Key Vault reference (BLOCKS PROD)",
+    "SR-002": "disableLocalAuth \u2014 widened to AI Search/Cosmos/Storage + remove key fallbacks in cosmos.ts/azure-storage.ts (BLOCKS PROD)",
+    "SR-005": "dependency CVEs: 2 CRITICAL (form-data, next-auth) + 15 HIGH incl. jws, next, ws (BLOCKS PROD)",
+    "H-2": "no ipSecurityRestrictions; val1 unproxied managed cert contradicts SAD 7.2 \u2014 needs fix or a decision-log entry",
+    "H-3": "SAD 16.2 Azure Policy does not exist \u2014 implement or correct the SAD claim",
+    "H-4": "GDPR erasure + TTL \u2014 worker in flight",
+    "H-5": "none of SAD 31.2's 7 alert rules implemented"
+  },
+  "testCount": 183
 }
