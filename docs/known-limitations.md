@@ -82,3 +82,57 @@ Implemented this pass: `src/features/admin/gdpr-erasure-service.ts` (`EraseDataS
 ## Authentication verification (2026-07-31)
 - **Interactive sign-in on the rotated credential is NOT verified.** The authorization-redirect leg is verified automatically (correct tenant/client_id/redirect_uri/scopes — see docs/reviews/val1-login-flow-verification.md Part A). The token exchange, session creation, authenticated page access, logout and re-login legs require entering real credentials at Microsoft's sign-in page, which the agent does not do. Part B of that document is a checklist pending the operator.
 - The 4 authenticated E2E journeys remain explicitly skipped for the same root cause: no test identity exists. Decision recorded: do NOT introduce a weaker authentication provider (e.g. a credentials provider) to make these tests pass — that would trade a real production security property for test convenience. Options when ready: a dedicated Entra test user in the tenant, or a test-only provider gated so it cannot be enabled in production.
+
+## GDPR retention-chain verification (2026-07-31) — live Azure findings beyond active-data erasure
+
+Full writeup: `docs/gdpr-erasure-evidence.md`. `EraseDataSubject`/`cosmos-retention.ts` (commit
+`d6fe070`) correctly handle active, queryable data. Verifying the rest of the retention chain
+against the live `rg-azurechat-val1` stack (`az` read-only queries, subscription "Azure
+subscription 1") surfaced gaps not previously documented:
+
+- **Cosmos DB is on default Periodic backup (4h interval / 8h retention), not the Continuous
+  Backup the SAD "decided" on.** SAD §22.1 states Continuous Backup (`Continuous30Days`) via a
+  `enableContinuousBackup bool = true` Bicep parameter was the accepted decision for Phase B
+  onward. That parameter does not exist anywhere in this repo, and `infra/modules/cosmos-db.bicep`
+  sets no `backupPolicy` at all — confirmed live via `az cosmosdb show --name
+  cosmos-azurechat-val1 --resource-group rg-azurechat-val1` (`"type": "Periodic",
+  "backupIntervalInMinutes": 240, "backupRetentionIntervalInHours": 8`). An erased Cosmos document
+  can still be recovered from an existing periodic backup for up to ~8-12 hours after erasure,
+  and only via an Azure Support ticket (no self-service point-in-time restore, unlike what
+  Continuous Backup would have provided). Revisit: add `enableContinuousBackup`/`backupPolicy` to
+  `cosmos-db.bicep` per the SAD's own decision, or formally revise §22.1 to describe what's
+  actually deployed.
+- **The `enableZeroDataRetention` Bicep parameter (`infra/main.bicep:42`) is dead code.** It is
+  declared with the SAD-described default (`false`) but is never passed into
+  `modules/openai.bicep`'s module call, and that module has no parameter or resource property
+  connected to it (verified by tracing `infra/main.bicep`'s `openAiModule` block and grepping
+  `modules/openai.bicep` for any ZDR/abuse-monitoring property). Flipping the parameter to `true`
+  today would do nothing. Live `oai-azurechat-val1` has `raiMonitorConfig: null` (Microsoft default
+  abuse-monitoring, unmodified) confirmed via `az cognitiveservices account show`. Real consequence:
+  every prompt/completion sent through this account can be retained by Microsoft for up to 30 days
+  for abuse-monitoring, with no code path in this repo to change that even after a hypothetical ZDR
+  approval. Revisit: either wire the parameter to a real ZDR-relevant property once Microsoft's
+  Limited Access Program approval is actually pursued, or remove the parameter so it stops implying
+  a control that doesn't exist.
+- **The commit-`d6fe070` blob lifecycle policy (`infra/modules/storage.bicep`,
+  `delete-images-after-90-days`) is not yet deployed to `rg-azurechat-val1`.** Confirmed via
+  `az storage account management-policy show --account-name stval136sepgklp44gk
+  --resource-group rg-azurechat-val1` → `ManagementPolicyNotFound`. The last `deploy-storage-val1`
+  run (`az deployment group list -g rg-azurechat-val1`) completed 2026-07-30T16:34:41Z, before
+  `d6fe070` was committed (2026-07-31T09:11:30+02:00). Revisit: re-run the storage deployment for
+  val1 (and any other already-provisioned customer stack) to pick up the lifecycle policy —
+  otherwise the 90-day backstop for un-erased chat-image blobs silently does not apply anywhere yet.
+- **Blob soft delete, container soft delete, and blob versioning are all disabled** on the live
+  `stval136sepgklp44gk` account (`deleteRetentionPolicy.enabled: false`,
+  `containerDeleteRetentionPolicy: null`, `isVersioningEnabled: null` — `az storage account
+  blob-service-properties show`). Not necessarily wrong (it means a hard delete is genuinely final,
+  which is erasure-friendly), but it was never a deliberate documented decision and means there is
+  currently zero accidental-deletion recovery window for this storage account. Revisit if/when a
+  storage-resilience pass happens.
+- **Azure OpenAI abuse-monitoring (up to 30 days, Microsoft-side) is the single largest
+  undisclosed retention exposure found in this review.** It is outside `EraseDataSubject`'s reach
+  entirely, is not mentioned in `docs/gdpr-erasure-evidence.md`'s predecessor documents as a live
+  risk, and the SAD's ZDR framing (§6.5/§16.3 — "Bicep-parameter klar fra dag 1") reads as though
+  the control is one flag away from ready, which the dead-parameter finding above shows is not
+  true. Recommend this be surfaced explicitly to any customer whose legal team reviews the erasure
+  story, not left implicit.
