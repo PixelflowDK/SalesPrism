@@ -94,9 +94,10 @@ jobs:
       contents: read
     steps:
       - name: Validate customer_slug format
+        env:
+          SLUG: ${{ inputs.customer_slug }}
         run: |
           set -euo pipefail
-          SLUG="${{ inputs.customer_slug }}"
           if ! echo "$SLUG" | grep -qE '^[a-z][a-z0-9-]{1,19}$'; then
             echo "::error::Invalid slug '$SLUG' — must be lowercase, start with a letter, alphanumeric + hyphens only, 2-20 chars total."
             exit 1
@@ -104,9 +105,10 @@ jobs:
           echo "Slug format OK: $SLUG"
 
       - name: Reject reserved slugs
+        env:
+          SLUG: ${{ inputs.customer_slug }}
         run: |
           set -euo pipefail
-          SLUG="${{ inputs.customer_slug }}"
           RESERVED="admin api www mail test staging prod"
           for r in $RESERVED; do
             if [ "$SLUG" = "$r" ]; then
@@ -117,30 +119,39 @@ jobs:
           echo "Slug '$SLUG' is not reserved."
 
       - name: Validate required fields
+        env:
+          COMPANY_NAME: ${{ inputs.company_name }}
+          PERSONA_SYSTEM_PROMPT: ${{ inputs.persona_system_prompt }}
         run: |
           set -euo pipefail
-          if [ -z "${{ inputs.company_name }}" ]; then
+          if [ -z "$COMPANY_NAME" ]; then
             echo "::error::company_name is required and cannot be empty."
             exit 1
           fi
-          if [ -z "${{ inputs.persona_system_prompt }}" ]; then
+          if [ -z "$PERSONA_SYSTEM_PROMPT" ]; then
             echo "::error::persona_system_prompt is required and cannot be empty."
             exit 1
           fi
           echo "Required fields present."
 
       - name: Guard against B1 SKU in production
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          APP_SERVICE_SKU: ${{ inputs.app_service_sku }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.environment }}" = "production" ] && [ "${{ inputs.app_service_sku }}" = "B1" ]; then
+          if [ "$ENVIRONMENT" = "production" ] && [ "$APP_SERVICE_SKU" = "B1" ]; then
             echo "::error::app_service_sku B1 is validation-only (see infra/main.bicep). Choose B3 or P1v3 for a production customer."
             exit 1
           fi
 
       - name: Warn on quota-gated model tier
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          AI_MODEL_TIER: ${{ inputs.ai_model_tier }}
         run: |
-          if [ "${{ inputs.environment }}" = "production" ] && [ "${{ inputs.ai_model_tier }}" != "standard" ]; then
-            echo "::warning::ai_model_tier '${{ inputs.ai_model_tier }}' is quota-gated per ADR-001 (2026-07-30) until the corresponding Azure OpenAI quota grant lands in westeurope. Deployment will proceed but model deployment may fail if quota is still zero."
+          if [ "$ENVIRONMENT" = "production" ] && [ "$AI_MODEL_TIER" != "standard" ]; then
+            echo "::warning::ai_model_tier '$AI_MODEL_TIER' is quota-gated per ADR-001 (2026-07-30) until the corresponding Azure OpenAI quota grant lands in westeurope. Deployment will proceed but model deployment may fail if quota is still zero."
           fi
 
   # ---------------------------------------------------------------------------
@@ -168,8 +179,9 @@ jobs:
 
       - name: Compute deterministic resource names
         id: names
+        env:
+          SLUG: ${{ inputs.customer_slug }}
         run: |
-          SLUG="${{ inputs.customer_slug }}"
           {
             echo "resource_group=rg-azurechat-${SLUG}"
             echo "app_service_name=app-azurechat-${SLUG}"
@@ -190,19 +202,27 @@ jobs:
         run: az bicep build --file infra/main.bicep --stdout > /dev/null
 
       - name: Bicep what-if preview (subscription scope)
+        env:
+          CUSTOMER_SLUG: ${{ inputs.customer_slug }}
+          COMPANY_NAME: ${{ inputs.company_name }}
+          AZURE_REGION: ${{ inputs.azure_region }}
+          APP_SERVICE_SKU: ${{ inputs.app_service_sku }}
+          AI_MODEL_TIER: ${{ inputs.ai_model_tier }}
+          AI_SEARCH_SKU: ${{ inputs.ai_search_sku }}
+          ENVIRONMENT_TAG: ${{ inputs.environment }}
         run: |
           az deployment sub what-if \
-            --name "provision-${{ inputs.customer_slug }}-${{ github.run_id }}" \
-            --location "${{ inputs.azure_region }}" \
+            --name "provision-${CUSTOMER_SLUG}-${{ github.run_id }}" \
+            --location "$AZURE_REGION" \
             --template-file infra/main.bicep \
             --parameters \
-              customerSlug="${{ inputs.customer_slug }}" \
-              companyName="${{ inputs.company_name }}" \
-              azureRegion="${{ inputs.azure_region }}" \
-              appServiceSku="${{ inputs.app_service_sku }}" \
-              aiModelTier="${{ inputs.ai_model_tier }}" \
-              aiSearchSku="${{ inputs.ai_search_sku }}" \
-              environmentTag="${{ inputs.environment }}"
+              customerSlug="$CUSTOMER_SLUG" \
+              companyName="$COMPANY_NAME" \
+              azureRegion="$AZURE_REGION" \
+              appServiceSku="$APP_SERVICE_SKU" \
+              aiModelTier="$AI_MODEL_TIER" \
+              aiSearchSku="$AI_SEARCH_SKU" \
+              environmentTag="$ENVIRONMENT_TAG"
         # infra/main.bicep is subscription-scoped (targetScope = 'subscription').
         # Subscription/management-group/tenant scope deployments only ever behave as
         # Incremental — Azure does not support --mode Complete at this scope (Complete
@@ -211,24 +231,37 @@ jobs:
 
       - name: Bicep deploy (Incremental — subscription scope has no Complete mode)
         id: deploy
+        env:
+          CUSTOMER_SLUG: ${{ inputs.customer_slug }}
+          COMPANY_NAME: ${{ inputs.company_name }}
+          AZURE_REGION: ${{ inputs.azure_region }}
+          APP_SERVICE_SKU: ${{ inputs.app_service_sku }}
+          AI_MODEL_TIER: ${{ inputs.ai_model_tier }}
+          AI_SEARCH_SKU: ${{ inputs.ai_search_sku }}
+          ENVIRONMENT_TAG: ${{ inputs.environment }}
+          # Derived from the already-regex-validated slug, so not independently
+          # exploitable — bound here anyway so NO `${{ }}` expansion remains inside
+          # any `run:` body and the file can be audited by that rule alone.
+          NAMES_RESOURCE_GROUP: ${{ steps.names.outputs.resource_group }}
+          NAMES_APP_SERVICE_NAME: ${{ steps.names.outputs.app_service_name }}
         run: |
           set -euo pipefail
           az deployment sub create \
-            --name "provision-${{ inputs.customer_slug }}-${{ github.run_id }}" \
-            --location "${{ inputs.azure_region }}" \
+            --name "provision-${CUSTOMER_SLUG}-${{ github.run_id }}" \
+            --location "$AZURE_REGION" \
             --template-file infra/main.bicep \
             --parameters \
-              customerSlug="${{ inputs.customer_slug }}" \
-              companyName="${{ inputs.company_name }}" \
-              azureRegion="${{ inputs.azure_region }}" \
-              appServiceSku="${{ inputs.app_service_sku }}" \
-              aiModelTier="${{ inputs.ai_model_tier }}" \
-              aiSearchSku="${{ inputs.ai_search_sku }}" \
-              environmentTag="${{ inputs.environment }}" \
+              customerSlug="$CUSTOMER_SLUG" \
+              companyName="$COMPANY_NAME" \
+              azureRegion="$AZURE_REGION" \
+              appServiceSku="$APP_SERVICE_SKU" \
+              aiModelTier="$AI_MODEL_TIER" \
+              aiSearchSku="$AI_SEARCH_SKU" \
+              environmentTag="$ENVIRONMENT_TAG" \
             --output json > deployment-output.json
 
-          RG="${{ steps.names.outputs.resource_group }}"
-          APP="${{ steps.names.outputs.app_service_name }}"
+          RG="$NAMES_RESOURCE_GROUP"
+          APP="$NAMES_APP_SERVICE_NAME"
 
           HOSTNAME=$(jq -r '.properties.outputs.appServiceHostname.value' deployment-output.json)
           echo "app_service_hostname=${HOSTNAME}" >> "$GITHUB_OUTPUT"
@@ -268,9 +301,10 @@ jobs:
 
       - name: Guard — record name must match *-sales360 pattern
         id: guard
+        env:
+          SLUG: ${{ inputs.customer_slug }}
         run: |
           set -euo pipefail
-          SLUG="${{ inputs.customer_slug }}"
           RECORD_BASE="${SLUG}-sales360"
           if ! echo "$RECORD_BASE" | grep -qE '^[a-z][a-z0-9-]{1,19}-sales360$'; then
             echo "::error::Computed DNS record name '$RECORD_BASE' does not match the required pattern ^[a-z][a-z0-9-]{1,19}-sales360\$. Refusing to touch Cloudflare DNS."
@@ -484,18 +518,24 @@ jobs:
         env:
           RG: ${{ needs.deploy-infrastructure.outputs.resource_group }}
           APP: ${{ needs.deploy-infrastructure.outputs.app_service_name }}
+          AI_MODEL_TIER: ${{ inputs.ai_model_tier }}
+          THEME_ID: ${{ inputs.theme_id }}
+          LOGO_URL: ${{ inputs.logo_url }}
+          PERSONA_SYSTEM_PROMPT: ${{ inputs.persona_system_prompt }}
+          COMPANY_NAME: ${{ inputs.company_name }}
+          CUSTOMER_SLUG: ${{ inputs.customer_slug }}
         run: |
           set -euo pipefail
           az webapp config appsettings set \
             --resource-group "$RG" \
             --name "$APP" \
             --settings \
-              AI_MODEL_TIER="${{ inputs.ai_model_tier }}" \
-              THEME_ID="${{ inputs.theme_id }}" \
-              LOGO_URL="${{ inputs.logo_url }}" \
-              PERSONA_SYSTEM_PROMPT="${{ inputs.persona_system_prompt }}" \
-              COMPANY_NAME="${{ inputs.company_name }}" \
-              CUSTOMER_SLUG="${{ inputs.customer_slug }}" \
+              AI_MODEL_TIER="$AI_MODEL_TIER" \
+              THEME_ID="$THEME_ID" \
+              LOGO_URL="$LOGO_URL" \
+              PERSONA_SYSTEM_PROMPT="$PERSONA_SYSTEM_PROMPT" \
+              COMPANY_NAME="$COMPANY_NAME" \
+              CUSTOMER_SLUG="$CUSTOMER_SLUG" \
               SCM_DO_BUILD_DURING_DEPLOYMENT="false" \
               WEBSITE_NODE_DEFAULT_VERSION="~22" \
             -o none
@@ -563,9 +603,13 @@ jobs:
           FQDN: ${{ needs.configure-dns.outputs.fqdn }}
           TLS_STATUS: ${{ needs.configure-application.outputs.tls_status }}
           SUB_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          CUSTOMER_SLUG: ${{ inputs.customer_slug }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          AI_MODEL_TIER: ${{ inputs.ai_model_tier }}
+          AZURE_REGION: ${{ inputs.azure_region }}
         run: |
           {
-            echo "## Sales Prism — Customer Provisioned: ${{ inputs.customer_slug }}"
+            echo "## Sales Prism — Customer Provisioned: ${CUSTOMER_SLUG}"
             echo ""
             echo "| Field | Value |"
             echo "|---|---|"
@@ -573,10 +617,10 @@ jobs:
             echo "| Resource Group | ${RG:-unknown} |"
             echo "| Azure Portal | https://portal.azure.com/#@/resource/subscriptions/${SUB_ID}/resourceGroups/${RG}/overview |"
             echo "| TLS status | ${TLS_STATUS:-unknown} (installed = Full Strict origin cert bound; pending = served via Cloudflare proxy, Full mode, no origin cert yet) |"
-            echo "| Environment | ${{ inputs.environment }} |"
-            echo "| AI model tier | ${{ inputs.ai_model_tier }} |"
+            echo "| Environment | ${ENVIRONMENT} |"
+            echo "| AI model tier | ${AI_MODEL_TIER} |"
             echo ""
-            echo "**Note:** AI resources (Azure OpenAI) always deploy to **westeurope** regardless of the azure_region input (${{ inputs.azure_region }}) — hard-pinned in infra/main.bicep's \`aiRegion\` param per ADR-001 (DataZoneStandard quota). Only non-AI resources use azure_region."
+            echo "**Note:** AI resources (Azure OpenAI) always deploy to **westeurope** regardless of the azure_region input (${AZURE_REGION}) — hard-pinned in infra/main.bicep's \`aiRegion\` param per ADR-001 (DataZoneStandard quota). Only non-AI resources use azure_region."
             echo ""
             echo "### Next steps"
             echo "- DNS may take a few minutes to propagate before the custom hostname resolves everywhere."
@@ -586,7 +630,7 @@ jobs:
             echo "- Entra ID App Registration for this customer is NOT created by this workflow (see scripts/appreg_setup.sh) — run separately if required."
             echo "- Cosmos DB TenantTheme seeding is NOT performed by this workflow — Cosmos DB has publicNetworkAccess disabled (private-endpoint only), so this needs a network-reachable path (self-hosted runner in the VNet, or app-side first-run bootstrap) before it can be automated here."
             echo "- Admin registry write (customer record) is a Phase D / Admin Portal feature (SAD §15) and is not yet implemented — no admin-registry Cosmos DB resource exists in infra/ yet. Track manually until that lands."
-            if [ "${{ inputs.ai_model_tier }}" != "standard" ] && [ "${{ inputs.environment }}" = "production" ]; then
-              echo "- ai_model_tier '${{ inputs.ai_model_tier }}' is quota-gated per ADR-001 — confirm the Azure OpenAI quota grant has landed in westeurope before telling the customer it is live."
+            if [ "${AI_MODEL_TIER}" != "standard" ] && [ "${ENVIRONMENT}" = "production" ]; then
+              echo "- ai_model_tier '${AI_MODEL_TIER}' is quota-gated per ADR-001 — confirm the Azure OpenAI quota grant has landed in westeurope before telling the customer it is live."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
