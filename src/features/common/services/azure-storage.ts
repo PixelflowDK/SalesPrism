@@ -54,6 +54,55 @@ export const UploadBlob = async (
   };
 };
 
+/**
+ * GDPR erasure (Art. 17) support — deletes every blob whose name starts
+ * with `prefix` (e.g. a chat-thread id, `"<threadId>/"`) from `containerName`.
+ * Used by `gdpr-erasure-service.ts` to remove a data subject's chat-image
+ * blobs; the "images" container keys blobs by `${threadId}/${fileName}`,
+ * not by user id, so the caller must resolve the subject's thread ids first
+ * (see `chat-image-service.ts`'s `GetBlobPath`).
+ *
+ * Best-effort per blob: one failed delete does not abort the batch, so a
+ * transient error on one blob never leaves erasure silently incomplete for
+ * the rest — the returned count only reflects blobs actually confirmed
+ * deleted. A missing container (never uploaded to, or already emptied by
+ * lifecycle management — see infra/modules/storage.bicep) is treated as
+ * zero blobs to delete, not an error.
+ */
+export const DeleteBlobsWithPrefix = async (
+  containerName: string,
+  prefix: string
+): Promise<ServerActionResponse<number>> => {
+  const blobServiceClient = InitBlobServiceClient();
+  const containerClient = blobServiceClient.getContainerClient(containerName);
+
+  try {
+    let deleted = 0;
+    for await (const blob of containerClient.listBlobsFlat({ prefix })) {
+      const result = await containerClient
+        .getBlockBlobClient(blob.name)
+        .deleteIfExists();
+      if (result.succeeded) {
+        deleted++;
+      }
+    }
+    return { status: "OK", response: deleted };
+  } catch (error) {
+    if (error instanceof RestError && error.statusCode === 404) {
+      // Container doesn't exist (yet) — nothing to delete, not a failure.
+      return { status: "OK", response: 0 };
+    }
+    return {
+      status: "ERROR",
+      errors: [
+        {
+          message: `Error deleting blobs with prefix: ${prefix}`,
+        },
+      ],
+    };
+  }
+};
+
 export const GetBlob = async (
   containerName: string,
   blobPath: string

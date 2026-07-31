@@ -4,6 +4,7 @@ import {
   ServerActionResponse,
 } from "@/features/common/server-action-response";
 import { ConfigContainer } from "@/features/common/services/cosmos";
+import { ACTIVITY_EVENT_TTL_SECONDS } from "@/features/common/services/cosmos-retention";
 import { safeLog } from "@/features/common/services/safe-logger";
 import { uniqueId } from "@/features/common/util";
 import { SqlQuerySpec } from "@azure/cosmos";
@@ -50,6 +51,19 @@ export const ActivityEventSchema = z.object({
   eventType: ActivityEventTypeSchema,
   timestamp: z.string(),
   metadata: ActivityEventMetadataSchema,
+  /**
+   * SAD §32.1 — 30-day retention for activity logs, expressed as a
+   * per-DOCUMENT Cosmos `ttl` (seconds), NOT a container-wide `defaultTtl`.
+   * `ConfigContainer` also holds `TenantTheme`/`ModuleConfig`/
+   * `TagDimensions`/`UserAccount` documents that must never expire — see
+   * `common/services/cosmos-retention.ts`'s module doc for why only THIS
+   * document type sets its own `ttl`. `.optional()` so pre-existing
+   * documents written before this field existed still parse (they simply
+   * never had a TTL and are swept up the first time this file's `ttl` is
+   * added going forward — acceptable since this is a new, additive control,
+   * not a regression).
+   */
+  ttl: z.number().int().positive().optional(),
 });
 export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
 
@@ -70,6 +84,7 @@ const recordEvent = async (
       eventType,
       timestamp: new Date().toISOString(),
       metadata,
+      ttl: ACTIVITY_EVENT_TTL_SECONDS,
     };
     await ConfigContainer().items.create<ActivityEvent>(model);
   } catch {

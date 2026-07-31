@@ -1,5 +1,6 @@
 import { EnsureUserOnLogin, GetOnboardingStatus } from "@/features/admin/user-service";
 import { isSpeechConfigured } from "@/features/common/services/azure-speech";
+import { EnsureContainerRetentionPolicies } from "@/features/common/services/cosmos-retention";
 import { HelpPanel } from "@/features/help/help-panel";
 import { AuthenticatedProviders } from "@/features/globals/providers";
 import { MainMenu } from "@/features/main-menu/main-menu";
@@ -26,6 +27,14 @@ export default async function RootLayout({
   // doc-comment). Best-effort — never throws, so a Cosmos hiccup here can
   // never block the whole authenticated app shell from rendering.
   await EnsureUserOnLogin();
+
+  // SAD §32.1 retention TTLs (GDPR) — same out-of-band-container reasoning
+  // as `EnsureUserOnLogin` above: Cosmos containers aren't created by this
+  // repo's Bicep, so the app applies `defaultTtl` itself. Memoized
+  // per-process (see cosmos-retention.ts) — after the first successful run
+  // on a given App Service instance this is a no-op boolean check, not a
+  // Cosmos round-trip. Best-effort — never throws.
+  await EnsureContainerRetentionPolicies();
 
   // Stage 5c, SAD §18 Phase F — resolved once per request, right after
   // `EnsureUserOnLogin` so the caller's own directory entry is guaranteed

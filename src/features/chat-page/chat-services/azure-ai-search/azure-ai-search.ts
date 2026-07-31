@@ -255,6 +255,77 @@ export const DeleteDocuments = async (
   }
 };
 
+/** OData string-literal escape — mirrors `chat-message-mapper.ts`'s `escapeODataLiteral`. Never interpolate a raw value into a `filter` string without this. */
+const escapeODataLiteral = (value: string): string => value.replace(/'/g, "''");
+
+/**
+ * GDPR erasure (Art. 17) support — deletes every AI Search index document
+ * whose `user` field (the same SHA-256 hashed id `rag-tool.ts`'s
+ * `buildDocumentSearchFilter` scopes retrieval by) matches `userId`, across
+ * every chat thread that user has ever uploaded documents to.
+ *
+ * The index is a derivative store of the uploaded documents, not an
+ * anonymized one: `pageContent` holds the full extracted document text and
+ * `user`/`chatThreadId` hold the same identifiers used for RAG access
+ * control, in the SAME index document as the `embedding` vector — so
+ * deleting this document removes text, identity tag, and vector together.
+ * There is no separate embedding-only store left behind afterward.
+ */
+export const DeleteDocumentsByUser = async (
+  userId: string
+): Promise<Array<ServerActionResponse<boolean>>> => {
+  try {
+    if (debug) console.log("Deleting documents for userId (GDPR erasure)");
+    const documentsForUserResponse = await SimpleSearch(
+      undefined,
+      `user eq '${escapeODataLiteral(userId)}'`
+    );
+
+    if (documentsForUserResponse.status === "OK") {
+      const instance = AzureAISearchInstance();
+      const deletedResponse = await instance.deleteDocuments(
+        documentsForUserResponse.response.map((r) => r.document)
+      );
+
+      const response: Array<ServerActionResponse<boolean>> = [];
+      deletedResponse.results.forEach((r) => {
+        if (r.succeeded) {
+          response.push({
+            status: "OK",
+            response: r.succeeded,
+          });
+        } else {
+          response.push({
+            status: "ERROR",
+            errors: [
+              {
+                message: `${r.errorMessage}`,
+              },
+            ],
+          });
+        }
+      });
+
+      if (debug) console.log("DeleteDocumentsByUser response:", response);
+      return response;
+    }
+
+    return [documentsForUserResponse];
+  } catch (e) {
+    console.error("DeleteDocumentsByUser error:", e);
+    return [
+      {
+        status: "ERROR",
+        errors: [
+          {
+            message: `${e}`,
+          },
+        ],
+      },
+    ];
+  }
+};
+
 export const EmbedDocuments = async (
   documents: Array<AzureSearchDocumentIndex>
 ): Promise<ServerActionResponse<Array<AzureSearchDocumentIndex>>> => {
