@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "6565193228013173694"
+      "templateHash": "2571673376965279975"
     }
   },
   "parameters": {
@@ -24,9 +24,32 @@
       "metadata": {
         "description": "Zone redundancy for the Cosmos account. Default false per SAD §34.5 (single-region MVP); westeurope zonal capacity is also frequently constrained."
       }
+    },
+    "databaseName": {
+      "type": "string",
+      "defaultValue": "chat",
+      "metadata": {
+        "description": "SQL API database name. Must match src/features/common/services/cosmos.ts AZURE_COSMOSDB_DB_NAME default (\"chat\") — app-service.bicep does not currently set that app setting, so the code default is authoritative."
+      }
+    },
+    "historyContainerName": {
+      "type": "string",
+      "defaultValue": "history",
+      "metadata": {
+        "description": "Chat-history container name. Must match cosmos.ts AZURE_COSMOSDB_CONTAINER_NAME default (\"history\"). Holds ChatThreadModel/ChatMessageModel/ChatDocumentModel/ChatCitationModel, partitioned on the end-user id."
+      }
+    },
+    "configContainerName": {
+      "type": "string",
+      "defaultValue": "config",
+      "metadata": {
+        "description": "Tenant-config container name. Must match cosmos.ts AZURE_COSMOSDB_CONFIG_CONTAINER_NAME default (\"config\"). Holds TenantTheme/ModuleConfig/UserAccount/CustomerEntity/MeetingBriefDocument/ActivityEvent/GDPR erasure audit records — all keyed, per established convention, on tenantSlug stored in the /userId path (never an end-user id)."
+      }
     }
   },
   "variables": {
+    "historyContainerDefaultTtl": 7776000,
+    "configContainerDefaultTtl": -1,
     "accountName": "[format('cosmos-azurechat-{0}', parameters('customerSlug'))]"
   },
   "resources": [
@@ -69,6 +92,59 @@
       "dependsOn": [
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('accountName'))]"
       ]
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+      "apiVersion": "2024-02-15-preview",
+      "name": "[format('{0}/{1}', variables('accountName'), parameters('databaseName'))]",
+      "properties": {
+        "resource": {
+          "id": "[parameters('databaseName')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('accountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-02-15-preview",
+      "name": "[format('{0}/{1}/{2}', variables('accountName'), parameters('databaseName'), parameters('historyContainerName'))]",
+      "properties": {
+        "resource": {
+          "id": "[parameters('historyContainerName')]",
+          "partitionKey": {
+            "paths": [
+              "/userId"
+            ],
+            "kind": "Hash"
+          },
+          "defaultTtl": "[variables('historyContainerDefaultTtl')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('accountName'), parameters('databaseName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-02-15-preview",
+      "name": "[format('{0}/{1}/{2}', variables('accountName'), parameters('databaseName'), parameters('configContainerName'))]",
+      "properties": {
+        "resource": {
+          "id": "[parameters('configContainerName')]",
+          "partitionKey": {
+            "paths": [
+              "/userId"
+            ],
+            "kind": "Hash"
+          },
+          "defaultTtl": "[variables('configContainerDefaultTtl')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('accountName'), parameters('databaseName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -79,6 +155,30 @@
     "cosmosEndpoint": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('accountName')), '2024-02-15-preview').documentEndpoint]"
+    },
+    "cosmosDatabaseId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('accountName'), parameters('databaseName'))]"
+    },
+    "cosmosDatabaseName": {
+      "type": "string",
+      "value": "[parameters('databaseName')]"
+    },
+    "cosmosHistoryContainerId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('accountName'), parameters('databaseName'), parameters('historyContainerName'))]"
+    },
+    "cosmosHistoryContainerName": {
+      "type": "string",
+      "value": "[parameters('historyContainerName')]"
+    },
+    "cosmosConfigContainerId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('accountName'), parameters('databaseName'), parameters('configContainerName'))]"
+    },
+    "cosmosConfigContainerName": {
+      "type": "string",
+      "value": "[parameters('configContainerName')]"
     }
   }
 }
