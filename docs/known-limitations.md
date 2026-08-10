@@ -202,3 +202,20 @@ real migration would need to, per tenant:
 - **Not fixable today**: `@ducanh2912/next-pwa` is already at its newest release (10.2.9) and the advisory covers >=10.2.7 — no patched version exists; `next` pins its own `postcss@8.4.31` and an override is rejected as conflicting with a direct dependency.
 - **Auth path is clean**: the next-auth CRITICAL and the jws HMAC advisory are both resolved. `getToken()` in middleware was treated as runtime-reachable throughout.
 - Re-check triggers are listed at the end of the triage doc. These verdicts are evidence-bound and must be re-run on any dependency change, or if CSS/workbox config ever becomes attacker-influenceable.
+
+## Readiness claims — historical correction (2026-08-10)
+
+**What the earlier val1 checks actually proved.** Between 2026-07-30 and 2026-08-10 the validation environment was described as "live and verified end-to-end". That was wrong and is corrected here permanently.
+
+`HTTP 200` on the root URL, a valid TLS certificate, and `/api/auth/providers` returning `azure-ad` proved exactly three things:
+- **HTTP availability** — the App Service was running and reachable.
+- **TLS** — the custom domain served a valid certificate.
+- **Auth-provider configuration** — NextAuth was configured against the correct tenant and app registration.
+
+They did **not** prove functional end-to-end readiness. Throughout that period the Cosmos `chat` database and its `history`/`config` containers did not exist (SR-009), so **no data-plane operation had ever succeeded** — every page load logged `theme.get-failed`. An environment can return HTTP 200 with its entire data layer absent; availability and functionality are different claims and were conflated.
+
+**Current status after SR-009 (commit 0ea8363):**
+- PROVEN: schema exists with correct partition keys and TTLs (ARM-verified); the unauthenticated theme/config path performs real managed-identity reads/writes through the private endpoint — errors present before the fix, absent after, with live log activity in the same window confirming logging was active.
+- NOT YET PROVEN: every authenticated path — chat thread/message/document/citation CRUD, customer entities, meeting briefs, persona/prompt persistence, activity events, GDPR erasure against real data, and item-level TTL behaviour. These require a real Entra session (Part B).
+
+**val1 must not be described as end-to-end functional until SR-009 and a real authenticated data-plane journey (Part B) both pass.** Availability, TLS and auth configuration are green; functional readiness is not yet established.
