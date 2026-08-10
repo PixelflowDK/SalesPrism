@@ -74,6 +74,28 @@ const configureIdentityProvider = () => {
             scope: "openid profile User.Read",
           },
         },
+        /**
+         * REQUIRED for ADR-003. Without this, next-auth's OAuth callback takes its
+         * `else` branch (`core/lib/oauth/callback.js`) and builds `profile` from
+         * Microsoft's OIDC **userinfo endpoint**, which returns only
+         * `sub, name, family_name, given_name, picture, email` — it carries neither
+         * `oid` nor `tid`. The canonical identity would then be underivable and, being
+         * fail-closed by design, every sign-in would be rejected after a *successful*
+         * Entra authentication. That was the live val1 defect: login succeeded at
+         * Microsoft, then bounced back to the login screen.
+         *
+         * With `idToken: true`, next-auth instead uses `tokens.claims()` — the verified
+         * **ID token** — which does carry `oid` and `tid`. This is the stricter path,
+         * not a looser one: `client.callback()` performs full OIDC validation
+         * (signature, issuer, audience, nonce) on that token, whereas the userinfo
+         * path trusts a separate bearer-authenticated HTTP response.
+         *
+         * Note the ID token has no `email` claim for accounts without a `mail`
+         * attribute (true for this tenant's MSA-federated `#EXT#` member), so the
+         * display-only email below correctly falls through to `preferred_username`.
+         * That is a DISPLAY attribute only — never ownership (ADR-003).
+         */
+        idToken: true,
         async profile(profile, tokens) {
           // `email`/`preferred_username` are display/contact attributes only
           // (ADR-003) — never used for ownership or admin authorization.
@@ -85,6 +107,25 @@ const configureIdentityProvider = () => {
           // confirmed both are present for the val1 tenant's admin token).
           const oid: string | undefined = (profile as { oid?: string }).oid;
           const tid: string | undefined = (profile as { tid?: string }).tid;
+          if (!oid || !tid) {
+            // Fail loudly at the boundary rather than minting a session that
+            // cannot own anything. Previously these were silently undefined
+            // (userinfo endpoint — see `idToken: true` above), producing a
+            // successful Entra login followed by an unusable session and a
+            // bounce back to the login screen with nothing in the logs
+            // explaining why. Codes only — never claim values.
+            console.error(
+              JSON.stringify({
+                code: "auth.entra.missing-identity-claims",
+                hasOid: !!oid,
+                hasTid: !!tid,
+                claimNames: Object.keys(profile ?? {}).sort(),
+              })
+            );
+            throw new Error(
+              "ADR-003: Entra token is missing the oid/tid claims required to derive a canonical identity."
+            );
+          }
           const newProfile = {
             ...profile,
             email,
