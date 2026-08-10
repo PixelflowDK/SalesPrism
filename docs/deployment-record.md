@@ -192,4 +192,46 @@ All other `process.env.*` references across `app/` and `features/` were grepped 
 - `ADMIN_OBJECT_IDS=7d37f13b-d198-4421-81c6-f0f9076049c7` **set** on app-azurechat-val1.
 - `ADMIN_EMAIL_ADDRESS` **removed** — the code no longer reads it; leaving it would be a misleading artifact suggesting an authorization path that no longer exists.
 - Ordering note: the setting was applied BEFORE the new build is deployed, so there is no window in which the running app has zero admins. The currently-deployed build predates ADR-003 and ignores the new variable harmlessly.
+
+## 2026-08-10 (later same day) — val1 redeploy from commit `a497807`
+
+**Reason:** the running app was still on commit `f05d994` (2026-07-30) — 18 commits and 11 days stale versus `develop` HEAD. Phase E (customers/briefs/personas), Phase F (PWA/model routing/onboarding/STT proxy), the Codex security fixes, GDPR erasure (Art. 17), and the ADR-003 identity migration were all committed but had never been deployed. The interactive login performed shortly before this task only proved availability/TLS/auth-config against that stale build, not functional readiness of current code.
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Scope:** touched only `app-azurechat-val1` in `rg-azurechat-val1` (deploy + restart + log download). No DNS changes. No destructive `az` commands. No app settings modified — `ADMIN_OBJECT_IDS=7d37f13b-d198-4421-81c6-f0f9076049c7` was verified already present and `ADMIN_EMAIL_ADDRESS` was verified already absent (per the ADR-003 entry above), so nothing was written. No secret values are recorded in this file or reported to the requester (one `az webapp config appsettings list -o table` call in-session incidentally rendered `AZURE_AD_CLIENT_SECRET` and `NEXTAUTH_SECRET` in wide-table output; those values were not repeated, logged, or written anywhere else). No git commit/push.
+
+**Build source:** committed HEAD `a497807` ("docs: permanent correction — earlier val1 checks proved availability/TLS/auth-config, not functional readiness"), built from a fresh isolated worktree `git worktree add /tmp/salesprism-deploy3 a497807` (main tree left untouched for concurrent edits). Node 22 LTS (`nvm use 22`, confirmed `v22.23.2`), `npm ci --legacy-peer-deps` (1023 packages, no install errors), `npm run build` — succeeded cleanly, all routes compiled including `/customers`, `/briefs`, `/api/speech/transcribe`, `/api/speech/synthesize`, `/api/admin/users/[userId]/gdpr-erase`, no build errors.
+
+**Required-env-var check (before packaging):** cross-referenced `src/types/type.ts`'s `azureEnvVars` list against current app settings and the services that actually read each var:
+- `AZURE_COSMOSDB_DB_NAME` / `AZURE_COSMOSDB_CONTAINER_NAME` — declared required by the type but not set as app settings; `features/common/services/cosmos.ts` defaults them to `"chat"` / `"history"` respectively if unset — not a boot-crash risk, defaults match the seeded schema (confirmed by the schema gate below).
+- `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` — `features/auth-page/auth-api.ts` only registers the GitHub provider `if (id && secret)` — optional, no crash when absent.
+- `AZURE_SPEECH_REGION` / `AZURE_SPEECH_KEY` — the `type.ts` declaration is stale (predates the ADR-003 identity migration, which replaced the key with `AZURE_SPEECH_RESOURCE_ID` + managed identity). `features/common/services/azure-speech.ts`'s `isSpeechConfigured()` gates on `AZURE_SPEECH_REGION && AZURE_SPEECH_RESOURCE_ID`, both currently unset on val1; `speech-availability-context.tsx` threads that boolean down so the UI hides/disables the mic button without ever hitting the route — confirmed graceful degrade, not a crash path. **Voice input is therefore inactive on val1 until a Speech resource is provisioned for this tenant — infra follow-up, not a deploy blocker.**
+- All other required vars (`AZURE_OPENAI_*`, `AZURE_COSMOSDB_URI`, `AZURE_SEARCH_*`, `AZURE_AD_*`, `NEXTAUTH_*`, `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`, `ADMIN_OBJECT_IDS`, `AZURE_KEY_VAULT_NAME`) were already present and correct. **No new app setting was needed or added.**
+
+**Packaging:** exact pattern from `.github/workflows/open-ai-app.yml` (`output: "standalone"`):
+- `cp -R .next/standalone → site-deploy/`
+- `cp -R .next/static → site-deploy/.next/static`
+- `cp -R public → site-deploy/public`
+- `zip Nextjs-site.zip ./* .next -qr` (22.3 MB)
+- Verified via `unzip -l` that the freshly built `public/sw.js` (14,732 bytes) and `public/workbox-605f62da.js` (23,983 bytes) — both gitignored build output, timestamped to this build, not stale copies — plus `public/manifest.json` and `server.js` are present at the correct paths inside the zip.
+
+**Deploy result:** `az webapp deploy -g rg-azurechat-val1 -n app-azurechat-val1 --src-path .../Nextjs-site.zip --type zip --async false` ran to completion: `"Status: Site started successfully. Time: 142(s)"`, `"Deployment has completed successfully"`. Deployment status object: `"status": "RuntimeSuccessful"`, `numberOfInstancesSuccessful: 1`, `numberOfInstancesFailed: 0`.
+
+**Restart + poll:** `az webapp restart`, then polled `https://val1-sales360.pixelflow.dk/` — first check after restart already returned `200`.
+
+**Step-7 "new build is actually live" proofs (not just HTTP 200):**
+- `GET /manifest.json` → `200`, `"name": "Coach 360"` (Phase F PWA manifest).
+- `GET /api/auth/providers` → `200`, `{"azure-ad": {...}}` present.
+- `GET /customers` → `307` redirect to `/` (login), **not 404** — this route 404'd on the old (pre-Phase-E) build; the redirect is direct proof the new route tree and auth middleware are live.
+- `GET /briefs` → `307` redirect to `/` (login), **not 404** — same proof, Phase E briefs feature.
+
+**Boot log summary:** two container instance boots observed during the verification window (`2026-08-10T15:38:31Z` and `2026-08-10T15:41:53Z`, both normal App Service Linux instance lifecycle, not crashes) — both show `Next.js 15.5.23`, `✓ Ready in 1347ms` / `1867ms`, followed by clean AI Search configuration logging, with **zero** occurrences of `error`/`exception`/`fatal` in application output (all `tar:` lines matching those keywords are harmless clock-skew filename noise from zip extraction, e.g. `.../Error.js: time stamp ... is N s in the future` — not application errors).
+- **`theme.get-failed` / `theme.seed-failed` check (explicitly requested):** `theme.get-failed` appeared repeatedly on the **old** build (last occurrence `2026-08-10T14:43:15Z`, before this redeploy). **Zero occurrences of `theme.get-failed` or `theme.seed-failed` since the new build's first boot (`15:38:31Z` onward)**, across three separate log downloads spanning both container instances and several fresh page-load hits (`/`, `/chat`). This is consistent with both the schema fix and the new code now being in place together.
+
+**Schema gate:** `bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1` → **all checks passed, exit 0** — `disableLocalAuth=true`, `enableAutomaticFailover=true`, database `chat` and containers `history`/`config` present with correct partition keys (`/userId`) and TTLs (7,776,000 / -1), no provisioned throughput (serverless-correct), `CanNotDelete` lock present, and the script's own managed-identity smoke test (`GET /` → `200`, `EnsureTenantTheme` executed) passed.
+
+**Cleanup:** `git worktree remove /tmp/salesprism-deploy3 --force` — removed cleanly; main working tree was never touched.
+
+**Outstanding:** Part B (interactive login walkthrough) must be re-run against this build — the earlier interactive login predates this deploy and only verified availability/TLS/auth-config on the stale `f05d994` build, not any of the Phase E/F functionality now live.
 - Verified: `az webapp config appsettings list` shows ADMIN_OBJECT_IDS present and no ADMIN_* email variable.

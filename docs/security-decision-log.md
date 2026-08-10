@@ -21,7 +21,7 @@ An Entra ID app registration enabling end-user sign-in to the validation deploym
 | Service principal object ID | `e3adb26d-44f7-4ec3-acd5-4171272d98de` |
 | Sign-in audience | `AzureADMyOrg` (single-tenant) |
 | Redirect URIs | `https://val1-sales360.pixelflow.dk/api/auth/callback/azure-ad`, `https://app-azurechat-val1.azurewebsites.net/api/auth/callback/azure-ad` |
-| Client secret | `val1-90d-20260731`, expires **2026-10-29T23:59:59Z** (90 days — rotated, see SD-002) |
+| Client secret | `val1-90d-20260810-rotated`, expires **2026-11-08T23:59:59Z** (90 days; rotated twice — see SD-002 and SD-003) |
 
 ### Permission verification (evidence, 2026-07-30)
 
@@ -63,6 +63,46 @@ The original credential (`val1-deploy-20260730`) carried a 1-year expiry (2027-0
 **Next rotation due: 2026-10-29.** Add to the operations runbook. If SR-001 closes first (Key Vault reference), rotation moves to the Key Vault rotation policy and this manual step retires.
 
 **SR-001 remains OPEN and production-blocking.** A shorter lifetime reduces exposure window; it does not satisfy the requirement that the credential be consumed via a Key Vault reference (or replaced by certificate-based auth).
+
+---
+
+## SD-003 — Secret exposure incident + rotation (2026-08-10)
+
+**Status:** CONTAINED · **Severity:** Low-Medium (local transcript only, no external disclosure)
+
+### What happened
+While verifying app settings before the `a497807` deployment, an agent ran
+`az webapp config appsettings list -o table`. Wide-table rendering printed the **values** of
+`AZURE_AD_CLIENT_SECRET` and `NEXTAUTH_SECRET` into its tool output, which is persisted to a
+local session transcript. The agent self-reported this rather than staying silent — the correct
+behaviour, and the reason it was containable.
+
+### Blast radius
+- Exposure was to a **local transcript file** on the operator's machine. Not committed, not
+  pushed, not sent to any external service, not printed in documentation.
+- Both values were nonetheless **treated as compromised**. A secret written anywhere outside its
+  intended store is a rotation trigger; "probably fine" is not a security control.
+
+### Response (verify-before-remove, zero downtime)
+| Step | Action | Evidence |
+|---|---|---|
+| 1 | Created replacement client secret `val1-90d-20260810-rotated`, expiry **2026-11-08** (90-day policy preserved) | Both credentials briefly co-existed |
+| 2 | Generated a fresh `NEXTAUTH_SECRET` (`openssl rand -base64 32`) | Never echoed |
+| 3 | Applied both to the val1 App Service in one operation | Values piped shell-variable → `az`, never printed |
+| 4 | Verified the new client secret against Entra's token endpoint | First attempt returned `invalid_client` (propagation delay); retry loop confirmed **HTTP 200 + access_token**. The old credential was NOT removed until this passed |
+| 5 | Deleted the exposed credential (keyId `52d9731c-…`) | Credential list now shows exactly one entry |
+| 6 | Restarted; site returned 200 | App runs on the new secrets alone |
+
+**Side effect, intended:** rotating `NEXTAUTH_SECRET` invalidates all existing sessions. Harmless
+here — the only session belonged to a login against the now-superseded build, and Part B must be
+re-run regardless.
+
+### Follow-up
+- Never use `az ... appsettings list` without projecting to `[].name` when secrets may be present.
+  A `--query` that selects only names cannot leak values regardless of output format.
+- Reinforces **SR-001**: with the secret in App Service settings, any tooling that reads settings
+  can surface it. A Key Vault reference would have returned `@Microsoft.KeyVault(...)` — a pointer,
+  not a secret. This incident is a concrete argument for closing SR-001, not merely a hygiene note.
 
 ---
 
