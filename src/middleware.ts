@@ -27,9 +27,49 @@ const requireAuth: string[] = [
 // `requireAdminContext()` call. Defense in depth: keep both.
 const requireAdmin: string[] = ["/reporting", "/admin", "/api/admin"];
 
+/**
+ * NextAuth cookies whose values are bound to NEXTAUTH_SECRET. When that secret is
+ * rotated, any cookie a browser still holds becomes permanently unverifiable.
+ * Both the `__Secure-`/`__Host-` prefixed and unprefixed spellings are listed because
+ * the prefix depends on the deployment's URL scheme, and a browser can end up holding
+ * BOTH after an environment changes — in which case clearing only one leaves the stale
+ * one still being sent.
+ */
+const NEXT_AUTH_COOKIES = [
+  "next-auth.csrf-token",
+  "__Host-next-auth.csrf-token",
+  "next-auth.callback-url",
+  "__Secure-next-auth.callback-url",
+  "next-auth.session-token",
+  "__Secure-next-auth.session-token",
+];
+
 export async function middleware(request: NextRequest) {
   const res = NextResponse.next();
   const pathname = request.nextUrl.pathname;
+
+  /**
+   * Self-heal a stale CSRF cookie instead of dead-ending the user.
+   *
+   * When NEXTAUTH_SECRET is rotated, a browser holding the previous csrf cookie fails
+   * NextAuth's CSRF check. NextAuth answers the sign-in POST with a 302 back to
+   * `/api/auth/signin?csrf=true`; the client-side `signIn()` helper follows that by
+   * assigning window.location, so the page simply re-renders and the button appears
+   * to do nothing — no error, no progress, indefinitely, because the offending cookie
+   * is never cleared. Observed live on val1 after the SD-003 rotation.
+   *
+   * Clearing the bound cookies here turns a permanent dead end into a single retry:
+   * the next request gets a freshly issued csrf token. This weakens no security
+   * property — expired/unverifiable cookies carry no authority, and the CSRF check
+   * itself still runs on every sign-in.
+   */
+  if (pathname === "/api/auth/signin" && request.nextUrl.searchParams.get("csrf") === "true") {
+    const healed = NextResponse.redirect(new URL("/", request.url));
+    for (const name of NEXT_AUTH_COOKIES) {
+      healed.cookies.set(name, "", { maxAge: 0, path: "/" });
+    }
+    return healed;
+  }
 
   if (requireAuth.some((path) => pathname.startsWith(path))) {
     const token = await getToken({
@@ -73,5 +113,9 @@ export const config = {
     "/briefs",
     "/persona/:path*",
     "/prompt/:path*",
+    // Auth routes are otherwise deliberately excluded (anon access is required to log
+    // on). This ONE path is included solely for the stale-CSRF self-heal above — it
+    // adds no auth check and cannot gate sign-in.
+    "/api/auth/signin",
   ],
 };
