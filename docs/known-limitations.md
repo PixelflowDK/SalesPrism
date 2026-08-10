@@ -136,3 +136,10 @@ subscription 1") surfaced gaps not previously documented:
   the control is one flag away from ready, which the dead-parameter finding above shows is not
   true. Recommend this be surfaced explicitly to any customer whose legal team reviews the erasure
   story, not left implicit.
+
+## SR-005 dependency CVEs — residual (2026-08-10)
+7 remain (2 HIGH, 5 MODERATE) after clearing both CRITICALs. Full per-CVE reachability evidence: docs/reviews/sr-005-cve-triage.md.
+- All residual findings are **build-time only** except `nanoid`, where a vendored copy IS on the server render path but the vulnerable code path (custom generator with size 0) is never invoked.
+- **Not fixable today**: `@ducanh2912/next-pwa` is already at its newest release (10.2.9) and the advisory covers >=10.2.7 — no patched version exists; `next` pins its own `postcss@8.4.31` and an override is rejected as conflicting with a direct dependency.
+- **Auth path is clean**: the next-auth CRITICAL and the jws HMAC advisory are both resolved. `getToken()` in middleware was treated as runtime-reachable throughout.
+- Re-check triggers are listed at the end of the triage doc. These verdicts are evidence-bound and must be re-run on any dependency change, or if CSS/workbox config ever becomes attacker-influenceable.
