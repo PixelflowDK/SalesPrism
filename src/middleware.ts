@@ -64,6 +64,31 @@ export async function middleware(request: NextRequest) {
    * itself still runs on every sign-in.
    */
   if (pathname === "/api/auth/signin" && request.nextUrl.searchParams.get("csrf") === "true") {
+    /**
+     * Reassessed 2026-08-10 (docs/reviews/csrf-selfheal-reassessment.md) once the
+     * real cause of the val1 dead-end turned out to be the service worker caching
+     * `GET /api/auth/csrf` for 24h (fixed in dc9eb8e), not this cookie.
+     *
+     * RETAINED because it is the only mitigation for one failure class the
+     * NetworkOnly fix does not cover: a browser holding BOTH the prefixed and
+     * unprefixed csrf cookie. A fresh `Set-Cookie` replaces only the same-named
+     * cookie, so the other keeps being sent and NextAuth may keep reading the
+     * stale one. Clearing both names is the only way out.
+     *
+     * MASKING RISK, deliberately mitigated by the log below: for a PERSISTENT
+     * misconfiguration (e.g. NEXTAUTH_URL host/scheme mismatch so the cookie is
+     * never returned at all) this would otherwise present as an invisible
+     * click -> bounce -> click loop with nothing recorded anywhere. For the
+     * transient classes it is designed for, it resolves in ONE retry — so a
+     * repeated firing means the cause is NOT transient and must be investigated.
+     * Codes only; never cookie or token values.
+     */
+    console.error(
+      JSON.stringify({
+        code: "auth.csrf.self-heal-fired",
+        note: "CSRF validation failed; clearing secret-bound cookies. Repeated occurrences indicate a persistent misconfiguration, not a stale cookie.",
+      })
+    );
     const healed = NextResponse.redirect(new URL("/", request.url));
     for (const name of NEXT_AUTH_COOKIES) {
       healed.cookies.set(name, "", { maxAge: 0, path: "/" });
