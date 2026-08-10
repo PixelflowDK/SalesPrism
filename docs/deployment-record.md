@@ -235,3 +235,44 @@ All other `process.env.*` references across `app/` and `features/` were grepped 
 
 **Outstanding:** Part B (interactive login walkthrough) must be re-run against this build — the earlier interactive login predates this deploy and only verified availability/TLS/auth-config on the stale `f05d994` build, not any of the Phase E/F functionality now live.
 - Verified: `az webapp config appsettings list` shows ADMIN_OBJECT_IDS present and no ADMIN_* email variable.
+
+## 2026-08-10 (later same day) — val1 redeploy from commit `01183cd` (auth fixes: CSRF self-heal + ID-token claims)
+
+**Reason:** two auth fixes needed to reach val1 together — `86cfb95` (middleware self-heals a stale NextAuth CSRF cookie left over from the SD-003 `NEXTAUTH_SECRET` rotation) and `01183cd` (Azure AD provider now requests `idToken: true` so `oid`/`tid` are read from the verified ID token instead of the userinfo endpoint, which carries neither). Without `01183cd`, Entra login succeeds but the session is then refused by ADR-003's fail-closed identity check.
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Scope:** touched only `app-azurechat-val1` in `rg-azurechat-val1` (deploy + restart + log download). No DNS changes. No destructive `az` commands. No app settings read or modified. No secret values printed — app-settings listing was not needed for this deploy.
+
+**Commit verification:** `git merge-base --is-ancestor 86cfb95 01183cd` confirmed `86cfb95` is an ancestor of `01183cd` — both fixes are present in the deployed HEAD.
+
+**Build source:** committed HEAD `01183cd` ("fix(auth): read oid/tid from the ID token, not the userinfo endpoint (ADR-003)"), built from a fresh isolated worktree `git worktree add /tmp/salesprism-deploy4 01183cd` (main tree untouched). Node 22 LTS (`nvm use 22`, confirmed `v22.23.2`), `npm ci --legacy-peer-deps` (1023 packages, no install errors), `npm run build` — succeeded cleanly, all routes compiled, no build errors.
+
+**Packaging:** exact pattern from `.github/workflows/open-ai-app.yml` (`output: "standalone"`):
+- `cp -R .next/standalone → site-deploy/`
+- `cp -R .next/static → site-deploy/.next/static`
+- `cp -R public → site-deploy/public`
+- `zip Nextjs-site.zip ./* .next -qr` (22.3 MB)
+- Verified via `unzip -l` that the freshly built `public/sw.js` (14,732 bytes, timestamped to this build) was present in the zip at `public/sw.js`.
+
+**Deploy result:** `az webapp deploy -g rg-azurechat-val1 -n app-azurechat-val1 --src-path .../Nextjs-site.zip --type zip --async false` ran to completion: `"Status: Site started successfully. Time: 141(s)"`, `"Deployment has completed successfully"`. Deployment status object: `"status": "RuntimeSuccessful"`, `numberOfInstancesSuccessful: 1`, `numberOfInstancesFailed: 0`.
+
+**Restart + poll:** `az webapp restart`, then polled `https://val1-sales360.pixelflow.dk/` every 15s — first check after restart already returned `200`.
+
+**Positive discriminators that the NEW build is live (not just HTTP 200):**
+
+- **(a) Provider still builds a correct Entra authorize request post idToken-change:** obtained a valid CSRF token/cookie pair from `/api/auth/csrf`, then `POST /api/auth/signin/azure-ad` with that token → `302 Found`, `Location: https://login.microsoftonline.com/d4b1b55b-6c92-4419-9a08-956e975dce86/oauth2/v2.0/authorize?client_id=d67a176e-852e-451a-ad66-b9912e53a1c5&scope=openid%20profile%20User.Read&response_type=code&redirect_uri=...%2Fapi%2Fauth%2Fcallback%2Fazure-ad&state=...`. Correct tenant, correct client_id, `response_type=code` present. **PASS.**
+- **(b) Stale-CSRF self-heal (86cfb95) is live:** `POST /api/auth/signin/azure-ad` with a bogus/mismatched CSRF cookie+token → `302` to `/api/auth/signin?csrf=true` (standard NextAuth CSRF-mismatch behavior). Following that redirect (`GET /api/auth/signin?csrf=true`) → **`307` to `/`**, with `Set-Cookie` headers clearing 6 cookies at `Max-Age=0`: `next-auth.csrf-token`, `__Host-next-auth.csrf-token`, `next-auth.callback-url`, `__Secure-next-auth.callback-url`, `next-auth.session-token`, `__Secure-next-auth.session-token`. This exactly matches the `NEXT_AUTH_COOKIES` list added by the middleware fix in `86cfb95`. On the previous (pre-fix) build this redirect returned no clearing headers, per the commit's own reproduction notes. **PASS.** (No cookie values recorded anywhere — names only.)
+
+**Log findings:** downloaded full log archive (`az webapp log download`) and grepped both the live tail and the archive:
+- `auth.entra.missing-identity-claims` — **0 occurrences**, anywhere in the archive.
+- `OAuthCallbackError` / `SIGNIN_OAUTH_ERROR` — **0 occurrences**, anywhere in the archive.
+- `JWT_SESSION_ERROR` — 2 occurrences, both at `2026-08-10T16:17:40–42Z`, i.e. **before** this deployment (from the prior, pre-fix build) — consistent with the exact defect this deploy fixes, not a regression introduced by it. Zero occurrences in the post-deploy window (container start `21:25:00Z` onward).
+- `theme.get-failed` — stayed **absent** in the post-deploy window; last occurrence anywhere was `2026-08-10T14:43:15Z`, well before this deployment's container started.
+- Container boot: clean — `Next.js 15.5.23`, `✓ Ready in 3.4s`, AI Search config logged normally, no application-level errors in the ~21:25–21:27 startup window (a subsequent explicit restart at 21:27 also booted cleanly).
+
+**Schema gate:** `bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1` → **all checks passed, exit 0** — `disableLocalAuth=true`, `enableAutomaticFailover=true`, database `chat` and containers `history`/`config` present with correct partition keys/TTLs, no provisioned throughput, `CanNotDelete` lock present, managed-identity smoke test (`GET /` → `200`, `EnsureTenantTheme` executed) passed.
+
+**Cleanup:** `git worktree remove /tmp/salesprism-deploy4 --force` — removed cleanly; downloaded log archive deleted from scratch space. Main working tree untouched. No git commit/push performed.
+
+**Outstanding — explicitly not proven by this deploy:** discriminators (a) and (b) confirm the new code is live and behaving correctly at the protocol level (correct authorize request, working CSRF self-heal). **They do not prove that an actual interactive Entra login now succeeds and creates a valid session** — that requires a human operator to complete the real Microsoft login (credentials, possibly MFA) in a browser and observe a working authenticated session. That walkthrough is still outstanding and must be performed by a human, not this agent.
