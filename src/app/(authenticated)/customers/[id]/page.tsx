@@ -28,9 +28,9 @@ const ALL_VALUE_AREAS: ValueArea[] = [
  */
 export default async function CustomerDetailPage(props: Props) {
   const { id } = await props.params;
-  const { tenantSlug, ownerHashedId } = await getSalesCoachActorContext();
+  const { tenantSlug, ownerId } = await getSalesCoachActorContext();
 
-  const result = await FindCustomerEntityById(tenantSlug, ownerHashedId, id);
+  const result = await FindCustomerEntityById(tenantSlug, ownerId, id);
   if (result.status !== "OK") {
     return <DisplayError errors={result.errors} />;
   }

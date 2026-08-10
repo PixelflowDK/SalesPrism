@@ -22,8 +22,8 @@ import {
  *
  * Every read/write below filters on BOTH `tenantSlug` (the Cosmos partition
  * key, `ConfigContainer` convention — see models.ts module doc) AND
- * `ownerHashedId` (the owning seller's hashed identity). Never drop the
- * `ownerHashedId` filter from a query — a seller's customer intelligence is
+ * `ownerId` (the owning seller's hashed identity). Never drop the
+ * `ownerId` filter from a query — a seller's customer intelligence is
  * private to that seller; cross-user leakage here is a security bug, not
  * just a data-quality bug.
  */
@@ -45,16 +45,16 @@ const parseCustomerEntity = (raw: unknown): ServerActionResponse<CustomerEntity>
 /** All customer entities owned by the current seller, for this tenant. Powers the `/customers` list view. */
 export const FindCustomerEntitiesForOwner = async (
   tenantSlug: string,
-  ownerHashedId: string
+  ownerId: string
 ): Promise<ServerActionResponse<CustomerEntity[]>> => {
   try {
     const querySpec: SqlQuerySpec = {
       query:
-        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.ownerHashedId=@ownerHashedId ORDER BY r.lastInteraction DESC",
+        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.ownerId=@ownerId ORDER BY r.lastInteraction DESC",
       parameters: [
         { name: "@type", value: CUSTOMER_ENTITY_ATTRIBUTE },
         { name: "@tenantSlug", value: tenantSlug },
-        { name: "@ownerHashedId", value: ownerHashedId },
+        { name: "@ownerId", value: ownerId },
       ],
     };
 
@@ -69,16 +69,16 @@ export const FindCustomerEntitiesForOwner = async (
   }
 };
 
-/** Single customer entity by id — re-checks `ownerHashedId` even after the partition-scoped point read. */
+/** Single customer entity by id — re-checks `ownerId` even after the partition-scoped point read. */
 export const FindCustomerEntityById = async (
   tenantSlug: string,
-  ownerHashedId: string,
+  ownerId: string,
   id: string
 ): Promise<ServerActionResponse<CustomerEntity>> => {
   try {
     const { resource } = await ConfigContainer().item(id, tenantSlug).read<CustomerEntity>();
 
-    if (!resource || resource.tenantSlug !== tenantSlug || resource.ownerHashedId !== ownerHashedId) {
+    if (!resource || resource.tenantSlug !== tenantSlug || resource.ownerId !== ownerId) {
       return { status: "NOT_FOUND", errors: [{ message: "Customer not found." }] };
     }
 
@@ -92,17 +92,17 @@ export const FindCustomerEntityById = async (
 /** Case-insensitive lookup by customer name, scoped to this seller. Used by F-01 proactive context + F-03 upsert-by-name. */
 export const FindCustomerEntityByName = async (
   tenantSlug: string,
-  ownerHashedId: string,
+  ownerId: string,
   customerName: string
 ): Promise<ServerActionResponse<CustomerEntity>> => {
   try {
     const querySpec: SqlQuerySpec = {
       query:
-        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.ownerHashedId=@ownerHashedId AND r.customerNameNormalized=@name",
+        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.ownerId=@ownerId AND r.customerNameNormalized=@name",
       parameters: [
         { name: "@type", value: CUSTOMER_ENTITY_ATTRIBUTE },
         { name: "@tenantSlug", value: tenantSlug },
-        { name: "@ownerHashedId", value: ownerHashedId },
+        { name: "@ownerId", value: ownerId },
         { name: "@name", value: normalizeCustomerName(customerName) },
       ],
     };
@@ -123,7 +123,7 @@ export const FindCustomerEntityByName = async (
 
 export const CreateCustomerEntity = async (input: {
   tenantSlug: string;
-  ownerHashedId: string;
+  ownerId: string;
   customerName: string;
   knownChallenges?: string[];
   contacts?: CustomerContact[];
@@ -136,7 +136,7 @@ export const CreateCustomerEntity = async (input: {
       type: CUSTOMER_ENTITY_ATTRIBUTE,
       userId: input.tenantSlug,
       tenantSlug: input.tenantSlug,
-      ownerHashedId: input.ownerHashedId,
+      ownerId: input.ownerId,
       customerName: input.customerName,
       customerNameNormalized: normalizeCustomerName(input.customerName),
       contacts: input.contacts ?? [],
@@ -168,11 +168,11 @@ export const CreateCustomerEntity = async (input: {
 /** Editable-fields patch (contacts / challenges / notes) — used by the `/customers/[id]` edit form. */
 export const UpdateCustomerEntity = async (
   tenantSlug: string,
-  ownerHashedId: string,
+  ownerId: string,
   id: string,
   patch: Partial<Pick<CustomerEntity, "customerName" | "contacts" | "knownChallenges" | "valueAreas">>
 ): Promise<ServerActionResponse<CustomerEntity>> => {
-  const existing = await FindCustomerEntityById(tenantSlug, ownerHashedId, id);
+  const existing = await FindCustomerEntityById(tenantSlug, ownerId, id);
   if (existing.status !== "OK") return existing;
 
   try {
@@ -242,16 +242,16 @@ export const mergeContacts = (
  */
 export const UpsertCustomerEntityFromExtraction = async (input: {
   tenantSlug: string;
-  ownerHashedId: string;
+  ownerId: string;
   customerName: string;
   newChallenges?: string[];
   newValueAreas?: ValueArea[];
   newContacts?: CustomerContact[];
 }): Promise<ServerActionResponse<CustomerEntity>> => {
-  const existing = await FindCustomerEntityByName(input.tenantSlug, input.ownerHashedId, input.customerName);
+  const existing = await FindCustomerEntityByName(input.tenantSlug, input.ownerId, input.customerName);
 
   if (existing.status === "OK") {
-    return UpdateCustomerEntityInteraction(input.tenantSlug, input.ownerHashedId, existing.response.id, {
+    return UpdateCustomerEntityInteraction(input.tenantSlug, input.ownerId, existing.response.id, {
       newChallenges: input.newChallenges,
       newValueAreas: input.newValueAreas,
       newContacts: input.newContacts,
@@ -264,7 +264,7 @@ export const UpsertCustomerEntityFromExtraction = async (input: {
 
   return CreateCustomerEntity({
     tenantSlug: input.tenantSlug,
-    ownerHashedId: input.ownerHashedId,
+    ownerId: input.ownerId,
     customerName: input.customerName,
     knownChallenges: dedupe(input.newChallenges ?? []),
     valueAreas: Array.from(new Set(input.newValueAreas ?? [])),
@@ -275,7 +275,7 @@ export const UpsertCustomerEntityFromExtraction = async (input: {
 /** Merges new observations into an existing entity and refreshes `lastInteraction` — does not touch the customer name. */
 export const UpdateCustomerEntityInteraction = async (
   tenantSlug: string,
-  ownerHashedId: string,
+  ownerId: string,
   id: string,
   input: {
     newChallenges?: string[];
@@ -283,7 +283,7 @@ export const UpdateCustomerEntityInteraction = async (
     newContacts?: CustomerContact[];
   }
 ): Promise<ServerActionResponse<CustomerEntity>> => {
-  const existing = await FindCustomerEntityById(tenantSlug, ownerHashedId, id);
+  const existing = await FindCustomerEntityById(tenantSlug, ownerId, id);
   if (existing.status !== "OK") return existing;
 
   try {
@@ -310,11 +310,11 @@ export const UpdateCustomerEntityInteraction = async (
 /** Links a saved MeetingBrief (F-01) into the customer's `meetingHistory` — creates the entity if it doesn't exist yet. */
 export const LinkMeetingBriefToCustomer = async (input: {
   tenantSlug: string;
-  ownerHashedId: string;
+  ownerId: string;
   customerName: string;
   meetingBriefId: string;
 }): Promise<ServerActionResponse<CustomerEntity>> => {
-  const existing = await FindCustomerEntityByName(input.tenantSlug, input.ownerHashedId, input.customerName);
+  const existing = await FindCustomerEntityByName(input.tenantSlug, input.ownerId, input.customerName);
 
   const target =
     existing.status === "OK"
@@ -322,7 +322,7 @@ export const LinkMeetingBriefToCustomer = async (input: {
       : existing.status === "NOT_FOUND"
       ? await CreateCustomerEntity({
           tenantSlug: input.tenantSlug,
-          ownerHashedId: input.ownerHashedId,
+          ownerId: input.ownerId,
           customerName: input.customerName,
         })
       : existing;

@@ -1,12 +1,13 @@
 import "server-only";
 
-import { getCurrentUser, hashValue, userHashedId } from "@/features/auth-page/helpers";
+import { getCurrentUser, currentUserId } from "@/features/auth-page/helpers";
 import {
   ServerActionResponse,
   zodErrorsToServerActionErrors,
 } from "@/features/common/server-action-response";
 import { ConfigContainer } from "@/features/common/services/cosmos";
 import { safeLog } from "@/features/common/services/safe-logger";
+import { uniqueId } from "@/features/common/util";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 import { GetTenantTheme } from "@/features/theme/tenant-theme";
 import { SqlQuerySpec } from "@azure/cosmos";
@@ -54,13 +55,26 @@ export const UserAccountSchema = z.object({
   userId: z.string(),
   tenantSlug: z.string(),
   /**
-   * SHA-256 hash of the authenticated user's email (`userHashedId()`) —
-   * the same identity value used throughout `chat-services/*`. This is
-   * how `EnsureUserOnLogin` finds "my own" doc and how `EnsureChatThreadOperation`-style
-   * ownership checks could later cross-reference a chat-history `userId`
-   * back to a directory entry. Never the raw email/name.
+   * ADR-003 canonical application principal (`${tenantId}:${oid}`, from
+   * `currentUserId()`/`canonicalUserId()`) — the same identity value used
+   * throughout `chat-services/*`. This is how `EnsureUserOnLogin` finds "my
+   * own" doc and how ownership checks cross-reference a chat-history
+   * `userId` back to a directory entry. Never the raw email/name.
+   *
+   * NULLABLE: `CreateUser` (the `/admin/users` "invite by email" flow)
+   * pre-provisions a directory entry BEFORE the invited person has ever
+   * signed in — at that point their real `oid` is unknowable (it only
+   * exists once Entra issues them a token). `null` here means "invited, not
+   * yet linked to a real login." `EnsureUserOnLogin` adopts the first
+   * matching-by-email pending invite it finds for this tenant and fills in
+   * the real `canonicalUserId` on first sign-in (see
+   * `findPendingInviteByEmail`). This email-match is a UX convenience for
+   * inheriting admin-set role/tags, NOT a security/ownership decision —
+   * every chat/customer/brief document is always owned by the freshly
+   * computed, verified `canonicalUserId`, never influenced by this field's
+   * prior null state.
    */
-  hashedId: z.string(),
+  canonicalUserId: z.string().nullable(),
   displayName: z.string(),
   email: z.string(),
   role: UserRoleSchema,
@@ -81,8 +95,18 @@ export const UserAccountSchema = z.object({
 });
 export type UserAccount = z.infer<typeof UserAccountSchema>;
 
-const userAccountDocId = (tenantSlug: string, hashedId: string) =>
-  `user-${tenantSlug}-${hashedId}`;
+/**
+ * The document `id` is intentionally NOT derived from `canonicalUserId` —
+ * unlike the pre-ADR-003 scheme (`user-${tenantSlug}-${hashValue(email)}`),
+ * a canonical id can be `null` at document-creation time (`CreateUser`'s
+ * pending-invite case, see `UserAccountSchema.canonicalUserId` doc above)
+ * and is filled in later without ever needing to rename/recreate the
+ * document. `id` only needs to be unique within the `tenantSlug` partition,
+ * which `uniqueId()` already guarantees — same pattern as every other
+ * `ConfigContainer` doc-id helper in this codebase (`customerEntityDocId`,
+ * `meetingBriefDocId`, ...).
+ */
+const userAccountDocId = (tenantSlug: string) => `user-${tenantSlug}-${uniqueId()}`;
 
 /** Below this age, `EnsureUserOnLogin` skips the `lastLoginAt` write entirely. */
 const LOGIN_TIMESTAMP_THROTTLE_MS = 5 * 60 * 1000;
@@ -144,18 +168,18 @@ export const FindUserById = async (
   }
 };
 
-const findByHashedId = async (
+const findByCanonicalUserId = async (
   tenantSlug: string,
-  hashedId: string
+  canonicalUserId: string
 ): Promise<ServerActionResponse<UserAccount>> => {
   try {
     const querySpec: SqlQuerySpec = {
       query:
-        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.hashedId=@hashedId",
+        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.canonicalUserId=@canonicalUserId",
       parameters: [
         { name: "@type", value: USER_ACCOUNT_ATTRIBUTE },
         { name: "@tenantSlug", value: tenantSlug },
-        { name: "@hashedId", value: hashedId },
+        { name: "@canonicalUserId", value: canonicalUserId },
       ],
     };
 
@@ -169,6 +193,87 @@ const findByHashedId = async (
     return parseUserAccount(resources[0]);
   } catch (error) {
     safeLog.error("admin.users.lookup-by-hash-failed", { tenantSlug });
+    return { status: "ERROR", errors: [{ message: "Unable to load user." }] };
+  }
+};
+
+/**
+ * Any directory entry (pending invite OR already-linked-to-a-real-login)
+ * matching `email`, case-insensitively, within this tenant. `CreateUser`'s
+ * pre-ADR-003 duplicate-prevention relied on the doc `id` itself being
+ * `hashValue(email)`-derived, so two invites for the same address collided
+ * on the SAME Cosmos `id` and the second write 409'd. Now that `id` is a
+ * random `uniqueId()` (decoupled from identity so a `null` canonicalUserId
+ * doesn't block doc creation — see `userAccountDocId`'s doc comment), that
+ * implicit dedup no longer happens for free, so `CreateUser` checks
+ * explicitly instead.
+ */
+const findAnyAccountByEmail = async (
+  tenantSlug: string,
+  email: string
+): Promise<ServerActionResponse<UserAccount>> => {
+  try {
+    const querySpec: SqlQuerySpec = {
+      query:
+        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND LOWER(r.email)=@email",
+      parameters: [
+        { name: "@type", value: USER_ACCOUNT_ATTRIBUTE },
+        { name: "@tenantSlug", value: tenantSlug },
+        { name: "@email", value: email.trim().toLowerCase() },
+      ],
+    };
+
+    const { resources } = await ConfigContainer()
+      .items.query<UserAccount>(querySpec, { partitionKey: tenantSlug })
+      .fetchAll();
+
+    if (resources.length === 0) {
+      return { status: "NOT_FOUND", errors: [{ message: "No account found." }] };
+    }
+    return parseUserAccount(resources[0]);
+  } catch (error) {
+    safeLog.error("admin.users.lookup-by-email-failed", { tenantSlug });
+    return { status: "ERROR", errors: [{ message: "Unable to load user." }] };
+  }
+};
+
+/**
+ * Finds an admin-pre-provisioned directory entry (`canonicalUserId IS
+ * NULL`, `CreateUser`'s "invite by email" case) matching `email`,
+ * case-insensitively, within this tenant. Used ONLY by
+ * `EnsureUserOnLogin`'s first-login reconciliation (see
+ * `UserAccountSchema.canonicalUserId` doc comment) — never for
+ * authentication or data ownership. If more than one pending invite happens
+ * to share an email (shouldn't normally occur — `CreateUser` doesn't
+ * dedupe by email across admins, only Cosmos 409s on exact `id` collision),
+ * the oldest (`createdAt ASC`, same tenant-list ordering as
+ * `FindUsersForTenant`) is adopted and the rest remain pending.
+ */
+const findPendingInviteByEmail = async (
+  tenantSlug: string,
+  email: string
+): Promise<ServerActionResponse<UserAccount>> => {
+  try {
+    const querySpec: SqlQuerySpec = {
+      query:
+        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND IS_NULL(r.canonicalUserId) AND LOWER(r.email)=@email ORDER BY r.createdAt ASC",
+      parameters: [
+        { name: "@type", value: USER_ACCOUNT_ATTRIBUTE },
+        { name: "@tenantSlug", value: tenantSlug },
+        { name: "@email", value: email.trim().toLowerCase() },
+      ],
+    };
+
+    const { resources } = await ConfigContainer()
+      .items.query<UserAccount>(querySpec, { partitionKey: tenantSlug })
+      .fetchAll();
+
+    if (resources.length === 0) {
+      return { status: "NOT_FOUND", errors: [{ message: "No pending invite found." }] };
+    }
+    return parseUserAccount(resources[0]);
+  } catch (error) {
+    safeLog.error("admin.users.lookup-pending-invite-failed", { tenantSlug });
     return { status: "ERROR", errors: [{ message: "Unable to load user." }] };
   }
 };
@@ -191,11 +296,11 @@ const findByHashedId = async (
 export const EnsureUserOnLogin = async (): Promise<void> => {
   try {
     const user = await getCurrentUser();
-    const hashedId = await userHashedId();
+    const canonicalUserId = await currentUserId();
     const tenantSlug = await getCurrentTenantSlug();
     const now = new Date().toISOString();
 
-    const existing = await findByHashedId(tenantSlug, hashedId);
+    const existing = await findByCanonicalUserId(tenantSlug, canonicalUserId);
 
     if (existing.status === "OK") {
       const doc = existing.response;
@@ -219,7 +324,31 @@ export const EnsureUserOnLogin = async (): Promise<void> => {
     }
 
     if (existing.status !== "NOT_FOUND") {
-      return; // transient read error already logged by findByHashedId
+      return; // transient read error already logged by findByCanonicalUserId
+    }
+
+    // ADR-003 reconciliation: no directory entry has this verified
+    // canonicalUserId yet — check for an admin-pre-provisioned "invite by
+    // email" entry (`canonicalUserId: null`, see `CreateUser`) before
+    // seeding a brand-new one, so a `/admin/users`-invited seller's
+    // admin-configured role/tags aren't silently orphaned the moment they
+    // actually sign in. This match is by email only (a UX convenience, not
+    // a security boundary — see the schema doc comment); the canonical id
+    // written below is always the freshly verified one, never derived from
+    // this match.
+    const pendingInvite = await findPendingInviteByEmail(tenantSlug, user.email);
+    if (pendingInvite.status === "OK") {
+      await ConfigContainer().items.upsert<UserAccount>({
+        ...pendingInvite.response,
+        canonicalUserId,
+        displayName: user.name,
+        email: user.email,
+        lastLoginAt: now,
+      });
+      return;
+    }
+    if (pendingInvite.status !== "NOT_FOUND") {
+      return; // transient read error already logged by findPendingInviteByEmail
     }
 
     const tenantTheme = await GetTenantTheme(tenantSlug);
@@ -227,15 +356,15 @@ export const EnsureUserOnLogin = async (): Promise<void> => {
       tenantTheme.status === "OK" ? tenantTheme.response.authMethod : "username-password";
 
     const seeded: UserAccount = {
-      id: userAccountDocId(tenantSlug, hashedId),
+      id: userAccountDocId(tenantSlug),
       type: USER_ACCOUNT_ATTRIBUTE,
       userId: tenantSlug,
       tenantSlug,
-      hashedId,
+      canonicalUserId,
       displayName: user.name,
       email: user.email,
-      // First-ever user for a tenant, or any email covered by
-      // ADMIN_EMAIL_ADDRESS, seeds as admin so a fresh tenant is never
+      // First-ever user for a tenant, or any oid covered by
+      // ADMIN_OBJECT_IDS, seeds as admin so a fresh tenant is never
       // locked out of its own /admin section.
       role: user.isAdmin ? "admin" : "user",
       authMethod,
@@ -273,8 +402,8 @@ export const EnsureUserOnLogin = async (): Promise<void> => {
 export const GetOnboardingStatus = async (): Promise<{ completed: boolean }> => {
   try {
     const tenantSlug = await getCurrentTenantSlug();
-    const hashedId = await userHashedId();
-    const existing = await findByHashedId(tenantSlug, hashedId);
+    const canonicalUserId = await currentUserId();
+    const existing = await findByCanonicalUserId(tenantSlug, canonicalUserId);
 
     if (existing.status === "OK") {
       return { completed: Boolean(existing.response.onboardingCompletedAt) };
@@ -300,8 +429,8 @@ export const GetOnboardingStatus = async (): Promise<{ completed: boolean }> => 
 export const MarkOnboardingCompleted = async (): Promise<void> => {
   try {
     const tenantSlug = await getCurrentTenantSlug();
-    const hashedId = await userHashedId();
-    const existing = await findByHashedId(tenantSlug, hashedId);
+    const canonicalUserId = await currentUserId();
+    const existing = await findByCanonicalUserId(tenantSlug, canonicalUserId);
     if (existing.status !== "OK") return;
 
     await ConfigContainer().items.upsert<UserAccount>({
@@ -313,6 +442,19 @@ export const MarkOnboardingCompleted = async (): Promise<void> => {
   }
 };
 
+/**
+ * Admin "invite by email" — pre-provisions a directory entry (role/tags/
+ * displayName) for someone who has never signed in yet. Under ADR-003 their
+ * real `canonicalUserId` (`${tenantId}:${oid}`) is only knowable once Entra
+ * issues them a token, so this seeds `canonicalUserId: null`;
+ * `EnsureUserOnLogin` links it to the real value on their first sign-in
+ * (see `findPendingInviteByEmail` and the schema doc comment). Until then,
+ * this entry owns no chat/customer/brief data (nothing could — those are
+ * all keyed by a non-null canonicalUserId), so a GDPR erasure request for a
+ * never-logged-in invitee is a no-op everywhere except this one directory
+ * doc (`EraseDataSubject` already handles `canonicalUserId: null` — see
+ * gdpr-erasure-service.ts).
+ */
 export const CreateUser = async (input: {
   displayName: string;
   email: string;
@@ -321,18 +463,26 @@ export const CreateUser = async (input: {
 }): Promise<ServerActionResponse<UserAccount>> => {
   try {
     const tenantSlug = await getCurrentTenantSlug();
-    const hashedId = hashValue(input.email.trim().toLowerCase());
+
+    const duplicate = await findAnyAccountByEmail(tenantSlug, input.email);
+    if (duplicate.status === "OK") {
+      return {
+        status: "ERROR",
+        errors: [{ message: "A user with this email already exists." }],
+      };
+    }
+
     const tenantTheme = await GetTenantTheme(tenantSlug);
     const authMethod: UserAuthMethod =
       tenantTheme.status === "OK" ? tenantTheme.response.authMethod : "username-password";
 
     const now = new Date().toISOString();
     const model: UserAccount = {
-      id: userAccountDocId(tenantSlug, hashedId),
+      id: userAccountDocId(tenantSlug),
       type: USER_ACCOUNT_ATTRIBUTE,
       userId: tenantSlug,
       tenantSlug,
-      hashedId,
+      canonicalUserId: null,
       displayName: input.displayName,
       email: input.email,
       role: input.role,

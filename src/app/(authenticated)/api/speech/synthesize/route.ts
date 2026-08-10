@@ -1,4 +1,4 @@
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { isSpeechConfigured, synthesizeSpeech } from "@/features/common/services/azure-speech";
 import { newRequestId, safeLog } from "@/features/common/services/safe-logger";
 
@@ -16,13 +16,13 @@ export const runtime = "nodejs"; // needs the Speech SDK's Node websocket transp
  * no Azure SDK import, no token, no direct connection from the browser.
  *
  * Auth: same defense-in-depth as `transcribe/route.ts` — `middleware.ts`
- * already gates `/api/speech/:path*`, `userHashedId()` re-checks here too.
+ * already gates `/api/speech/:path*`, `currentUserId()` re-checks here too.
  */
 export async function POST(req: Request): Promise<Response> {
   const requestId = newRequestId();
 
   try {
-    await userHashedId();
+    await currentUserId();
   } catch {
     return Response.json(
       { error: true, code: "unauthorized", message: "Sign in required." },

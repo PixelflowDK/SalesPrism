@@ -84,7 +84,7 @@ const buildSubjectUserAccount = (overrides: Partial<UserAccount> = {}): UserAcco
   type: USER_ACCOUNT_ATTRIBUTE,
   userId: TENANT,
   tenantSlug: TENANT,
-  hashedId: SUBJECT_HASHED_ID,
+  canonicalUserId: SUBJECT_HASHED_ID,
   displayName: "Real Seller Name",
   email: "real.seller@example.com",
   role: "user",
@@ -192,7 +192,7 @@ describe("EraseDataSubject", () => {
     const result = await EraseDataSubject({
       tenantSlug: TENANT,
       subjectUserId: SUBJECT_USER_DOC_ID,
-      performedByHashedId: ADMIN_HASHED_ID,
+      performedById: ADMIN_HASHED_ID,
     });
 
     expect(result.status).toBe("OK");
@@ -234,7 +234,7 @@ describe("EraseDataSubject", () => {
     await EraseDataSubject({
       tenantSlug: TENANT,
       subjectUserId: SUBJECT_USER_DOC_ID,
-      performedByHashedId: ADMIN_HASHED_ID,
+      performedById: ADMIN_HASHED_ID,
     });
 
     for (const call of historyQueryMock.mock.calls) {
@@ -246,7 +246,7 @@ describe("EraseDataSubject", () => {
     for (const call of configQueryMock.mock.calls) {
       const [querySpec, options] = call;
       expect(findParam(querySpec, "@tenantSlug")).toBe(TENANT);
-      expect(findParam(querySpec, "@subjectHashedId")).toBe(SUBJECT_HASHED_ID);
+      expect(findParam(querySpec, "@subjectId")).toBe(SUBJECT_HASHED_ID);
       expect(options).toEqual({ partitionKey: TENANT });
     }
 
@@ -257,12 +257,12 @@ describe("EraseDataSubject", () => {
     const customerEntitiesCall = configQueryMock.mock.calls.find(
       ([spec]) => findParam(spec, "@type") === CUSTOMER_ENTITY_ATTRIBUTE
     );
-    expect(customerEntitiesCall?.[0].query).toMatch(/c\.ownerHashedId=@subjectHashedId/);
+    expect(customerEntitiesCall?.[0].query).toMatch(/c\.ownerId=@subjectId/);
 
     const activityEventsCall = configQueryMock.mock.calls.find(
       ([spec]) => findParam(spec, "@type") === ACTIVITY_EVENT_ATTRIBUTE
     );
-    expect(activityEventsCall?.[0].query).toMatch(/c\.actorHashedId=@subjectHashedId/);
+    expect(activityEventsCall?.[0].query).toMatch(/c\.actorId=@subjectId/);
   });
 
   it("cannot erase another tenant's data — a subject whose UserAccount doc doesn't match the requested tenant returns NOT_FOUND with zero side effects", async () => {
@@ -273,7 +273,7 @@ describe("EraseDataSubject", () => {
     const result = await EraseDataSubject({
       tenantSlug: TENANT,
       subjectUserId: SUBJECT_USER_DOC_ID,
-      performedByHashedId: ADMIN_HASHED_ID,
+      performedById: ADMIN_HASHED_ID,
     });
 
     expect(result.status).toBe("NOT_FOUND");
@@ -289,7 +289,7 @@ describe("EraseDataSubject", () => {
     const result = await EraseDataSubject({
       tenantSlug: TENANT,
       subjectUserId: SUBJECT_USER_DOC_ID,
-      performedByHashedId: ADMIN_HASHED_ID,
+      performedById: ADMIN_HASHED_ID,
     });
 
     expect(result.status).toBe("OK");
@@ -297,8 +297,8 @@ describe("EraseDataSubject", () => {
     const [auditDoc] = configItemsCreateMock.mock.calls[0];
 
     expect(auditDoc.type).toBe(GDPR_ERASURE_AUDIT_ATTRIBUTE);
-    expect(auditDoc.subjectHashedId).toBe(SUBJECT_HASHED_ID);
-    expect(auditDoc.performedByHashedId).toBe(ADMIN_HASHED_ID);
+    expect(auditDoc.subjectId).toBe(SUBJECT_HASHED_ID);
+    expect(auditDoc.performedById).toBe(ADMIN_HASHED_ID);
     expect(auditDoc.tenantSlug).toBe(TENANT);
 
     const serialized = JSON.stringify(auditDoc);
@@ -308,7 +308,7 @@ describe("EraseDataSubject", () => {
 
     // Exact allow-listed field set — nothing extra could smuggle PII in later.
     expect(Object.keys(auditDoc).sort()).toEqual(
-      ["counts", "id", "performedByHashedId", "subjectHashedId", "tenantSlug", "timestamp", "type", "userId"].sort()
+      ["counts", "id", "performedById", "subjectId", "tenantSlug", "timestamp", "type", "userId"].sort()
     );
   });
 
@@ -316,7 +316,7 @@ describe("EraseDataSubject", () => {
     await EraseDataSubject({
       tenantSlug: TENANT,
       subjectUserId: SUBJECT_USER_DOC_ID,
-      performedByHashedId: ADMIN_HASHED_ID,
+      performedById: ADMIN_HASHED_ID,
     });
 
     expect(configItemsUpsertMock).toHaveBeenCalledTimes(1);
@@ -329,7 +329,105 @@ describe("EraseDataSubject", () => {
     // Identity anchors survive — required for the doc's own Cosmos identity
     // and admin-side lookups; erasure ≠ losing the ability to prove it happened.
     expect(anonymized.id).toBe(SUBJECT_USER_DOC_ID);
-    expect(anonymized.hashedId).toBe(SUBJECT_HASHED_ID);
+    expect(anonymized.canonicalUserId).toBe(SUBJECT_HASHED_ID);
     expect(anonymized.tenantSlug).toBe(TENANT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR-003 — `canonicalUserId` is nullable on `UserAccount` (an admin
+// pre-provisioned "invite by email" entry that has never signed in has no
+// real oid yet — see user-service.ts's `CreateUser`/`findPendingInviteByEmail`).
+// A GDPR erasure request against such a subject must still succeed (and
+// still be a COMPLETE erasure — there is nothing else to erase, since every
+// erasable store is keyed by a non-null canonicalUserId), never crash or
+// silently query with `null`/`undefined`.
+// ---------------------------------------------------------------------------
+describe("EraseDataSubject — never-logged-in invitee (canonicalUserId: null)", () => {
+  const PENDING_INVITE_DOC_ID = `user-${TENANT}-pending-invite-abc`;
+
+  beforeEach(() => {
+    historyQueryMock.mockReset();
+    historyItemDeleteMock.mockReset();
+    historyItemMock.mockClear();
+    configQueryMock.mockReset();
+    configItemReadMock.mockReset();
+    configItemDeleteMock.mockReset();
+    configItemMock.mockClear();
+    configItemsCreateMock.mockReset();
+    configItemsUpsertMock.mockReset();
+    deleteBlobsWithPrefixMock.mockReset();
+    deleteDocumentsByUserMock.mockReset();
+
+    // Every store-query mock would return data if queried at all — the
+    // assertions below prove `EraseDataSubject` never calls them for this
+    // subject, precisely because there is no canonicalUserId to scope by.
+    historyQueryMock.mockImplementation(
+      makeTypedQueryMock({
+        [CHAT_THREAD_ATTRIBUTE]: [{ id: "should-not-be-touched" }],
+      })
+    );
+    configQueryMock.mockImplementation(
+      makeTypedQueryMock({
+        [CUSTOMER_ENTITY_ATTRIBUTE]: [{ id: "should-not-be-touched" }],
+      })
+    );
+    configItemReadMock.mockResolvedValue({
+      resource: buildSubjectUserAccount({
+        id: PENDING_INVITE_DOC_ID,
+        canonicalUserId: null,
+        lastLoginAt: null,
+      }),
+    });
+    configItemsCreateMock.mockImplementation(async (doc: unknown) => ({ resource: doc }));
+    configItemsUpsertMock.mockImplementation(async (doc: unknown) => ({ resource: doc }));
+  });
+
+  it("skips every per-subject store lookup (nothing could be scoped to a null id) and returns all-zero counts", async () => {
+    const result = await EraseDataSubject({
+      tenantSlug: TENANT,
+      subjectUserId: PENDING_INVITE_DOC_ID,
+      performedById: ADMIN_HASHED_ID,
+    });
+
+    expect(result.status).toBe("OK");
+    if (result.status !== "OK") return;
+
+    expect(result.response.counts).toEqual({
+      chatThreads: 0,
+      chatMessages: 0,
+      chatDocuments: 0,
+      chatCitations: 0,
+      customerEntities: 0,
+      meetingBriefs: 0,
+      activityEvents: 0,
+      searchIndexDocuments: 0,
+      blobs: 0,
+      userAccount: "anonymized",
+    });
+
+    expect(historyQueryMock).not.toHaveBeenCalled();
+    expect(configQueryMock).not.toHaveBeenCalled();
+    expect(deleteDocumentsByUserMock).not.toHaveBeenCalled();
+    expect(deleteBlobsWithPrefixMock).not.toHaveBeenCalled();
+    expect(historyItemDeleteMock).not.toHaveBeenCalled();
+    expect(configItemDeleteMock).not.toHaveBeenCalled();
+
+    // The directory doc itself is still anonymized — erasure is complete
+    // even though there was nothing else to erase.
+    expect(configItemsUpsertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("records the audit trail with the literal subjectId \"never-logged-in\" instead of null/undefined", async () => {
+    const result = await EraseDataSubject({
+      tenantSlug: TENANT,
+      subjectUserId: PENDING_INVITE_DOC_ID,
+      performedById: ADMIN_HASHED_ID,
+    });
+
+    expect(result.status).toBe("OK");
+    expect(configItemsCreateMock).toHaveBeenCalledTimes(1);
+    const [auditDoc] = configItemsCreateMock.mock.calls[0];
+    expect(auditDoc.subjectId).toBe("never-logged-in");
   });
 });

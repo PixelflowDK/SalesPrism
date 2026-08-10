@@ -18,15 +18,15 @@ import { z } from "zod";
  * field on the DOCUMENT holds the *tenant slug* (so "all docs for my
  * tenant" is always a single, cheap, partition-scoped query), and the
  * actual acting/owning user's SHA-256 hashed identity is carried in a
- * separate, differently-named field (`hashedId` / `actorHashedId`).
+ * separate, differently-named field (`canonicalUserId` / `actorId`).
  *
  * Customer-entity and meeting-brief documents follow that SAME convention
  * here, not the backlog's literal field name, to stay consistent with every
  * other container-owning service in the app. The per-seller identity field
- * is named `ownerHashedId` and — per the Stage 5b brief — is included in
+ * is named `ownerId` and — per the Stage 5b brief — is included in
  * EVERY query filter alongside the tenant partition key. This is a hard
  * security boundary: a seller's customer intelligence is private to that
- * seller, and omitting `ownerHashedId` from a query filter is a
+ * seller, and omitting `ownerId` from a query filter is a
  * cross-user data leakage bug.
  */
 
@@ -189,7 +189,7 @@ export type CustomerContact = z.infer<typeof CustomerContactSchema>;
 
 /**
  * Customer-entity — F-03 persistent customer intelligence. Cosmos document
- * shape per backlog F-03 §Datamodel, adjusted for the `ownerHashedId`
+ * shape per backlog F-03 §Datamodel, adjusted for the `ownerId`
  * partition/ownership convention documented in the module doc-comment above.
  */
 export const CustomerEntitySchema = z.object({
@@ -199,7 +199,7 @@ export const CustomerEntitySchema = z.object({
   userId: z.string(),
   tenantSlug: z.string(),
   /** SHA-256 hash of the owning seller's email — the seller-scoping boundary. Never the raw email. */
-  ownerHashedId: z.string(),
+  ownerId: z.string(),
   customerName: z.string(),
   /** Lowercased/trimmed `customerName`, for case-insensitive `FindByCustomerName` lookups. */
   customerNameNormalized: z.string(),
@@ -289,7 +289,7 @@ export const MeetingBriefDocumentSchema = z.object({
   /** Cosmos partition key — set to `tenantSlug`, see module doc above. */
   userId: z.string(),
   tenantSlug: z.string(),
-  ownerHashedId: z.string(),
+  ownerId: z.string(),
   chatThreadId: z.string(),
   customerEntityId: z.string().nullable(),
   brief: MeetingBriefSchema,

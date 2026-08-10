@@ -1,10 +1,10 @@
 import "server-only";
 
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 
 /**
- * Shared `{ tenantSlug, ownerHashedId }` resolution for every Sales Coach
+ * Shared `{ tenantSlug, ownerId }` resolution for every Sales Coach
  * page/route that scopes data to "the current seller" — mirrors
  * `requireAdminContext()`'s pattern (admin-guard.ts) but without the
  * `isAdmin` check, since customers/briefs are per-seller data available to
@@ -12,11 +12,11 @@ import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
  */
 export const getSalesCoachActorContext = async (): Promise<{
   tenantSlug: string;
-  ownerHashedId: string;
+  ownerId: string;
 }> => {
-  const [tenantSlug, ownerHashedId] = await Promise.all([
+  const [tenantSlug, ownerId] = await Promise.all([
     getCurrentTenantSlug(),
-    userHashedId(),
+    currentUserId(),
   ]);
-  return { tenantSlug, ownerHashedId };
+  return { tenantSlug, ownerId };
 };

@@ -2,7 +2,7 @@
 import "server-only";
 
 import { RecordUploadEvent } from "@/features/admin/activity-service";
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { HistoryContainer } from "@/features/common/services/cosmos";
 
 import { RevalidateCache } from "@/features/common/navigation-helpers";
@@ -189,7 +189,7 @@ export const CreateChatDocument = async (
     const modelToSave: ChatDocumentModel = {
       chatThreadId: chatThreadID,
       id: uniqueId(),
-      userId: await userHashedId(),
+      userId: await currentUserId(),
       createdAt: new Date(),
       type: CHAT_DOCUMENT_ATTRIBUTE,
       isDeleted: false,
@@ -207,7 +207,7 @@ export const CreateChatDocument = async (
 
       // SAD §8.6 activity tracking — best-effort, count-only (no filename).
       const tenantSlug = await getCurrentTenantSlug();
-      await RecordUploadEvent({ tenantSlug, actorHashedId: modelToSave.userId });
+      await RecordUploadEvent({ tenantSlug, actorId: modelToSave.userId });
 
       return {
         status: "OK",

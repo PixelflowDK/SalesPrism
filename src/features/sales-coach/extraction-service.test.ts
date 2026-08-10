@@ -82,7 +82,7 @@ describe("runCustomerExtraction — CR2-5 (assistant prose must not be an author
 
     await runCustomerExtraction({
       tenantSlug: "acme",
-      ownerHashedId: "hashed-seller-id",
+      ownerId: "hashed-seller-id",
       userMessage: "Can you help me prep for a discovery call tomorrow?",
       assistantMessage:
         "Sure — noted that your customer is Shadow Industries and their main contact is Jamie Doe, CFO.",
@@ -107,7 +107,7 @@ describe("runCustomerExtraction — CR2-5 (assistant prose must not be an author
 
     await runCustomerExtraction({
       tenantSlug: "acme",
-      ownerHashedId: "hashed-seller-id",
+      ownerId: "hashed-seller-id",
       userMessage: "I just wrapped a call with Shadow Industries about their Q3 renewal.",
       assistantMessage: "Great, want me to draft some discovery questions for Shadow Industries?",
     });
@@ -144,7 +144,7 @@ describe("runCustomerExtraction — CR2-5 (assistant prose must not be an author
 
     await runCustomerExtraction({
       tenantSlug: "acme",
-      ownerHashedId: "hashed-seller-id",
+      ownerId: "hashed-seller-id",
       userMessage: "Talked to Real Contact, our IT Director, at Northwind about the rollout.",
       assistantMessage:
         "Got it — I also see Fabricated Ghost, the CFO, should be looped in on budget.",
@@ -168,7 +168,7 @@ describe("runCustomerExtraction — CR2-5 (assistant prose must not be an author
     await expect(
       runCustomerExtraction({
         tenantSlug: "acme",
-        ownerHashedId: "hashed-seller-id",
+        ownerId: "hashed-seller-id",
         userMessage: "hello",
         assistantMessage: "hi",
       })

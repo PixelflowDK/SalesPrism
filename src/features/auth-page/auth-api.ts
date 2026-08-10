@@ -7,12 +7,26 @@ import { hashValue } from "./helpers";
 import { image } from "@markdoc/markdoc/dist/src/schema";
 import { access } from "fs";
 
+/**
+ * ADR-003 — admin authorization by the verified Entra `oid` claim, never by
+ * a client-supplied or mutable value. Replaces `ADMIN_EMAIL_ADDRESS` (see
+ * the ADR's val1 investigation: the sole admin is an MSA-federated `#EXT#`
+ * account whose `mail`/`preferred_username` claims are not stable across
+ * logins, so an email/UPN allow-list was never actually safe here).
+ */
+// Exported for direct unit testing (see auth-api.test.ts) — no behavior
+// change, these were already the pure decision points; testing them
+// directly avoids having to simulate a full NextAuth OAuth round trip.
+export const getAdminObjectIds = (): string[] =>
+  process.env.ADMIN_OBJECT_IDS?.split(",")
+    .map((oid) => oid.toLowerCase().trim())
+    .filter((oid) => oid.length > 0) ?? [];
+
+export const isAdminOid = (oid: string | undefined | null): boolean =>
+  !!oid && getAdminObjectIds().includes(oid.toLowerCase());
+
 const configureIdentityProvider = () => {
   const providers: Array<Provider> = [];
-
-  const adminEmails = process.env.ADMIN_EMAIL_ADDRESS?.split(",").map((email) =>
-    email.toLowerCase().trim()
-  );
 
   if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
     providers.push(
@@ -21,9 +35,21 @@ const configureIdentityProvider = () => {
         clientSecret: process.env.AUTH_GITHUB_SECRET!,
         async profile(profile) {
           const image = await fetchProfilePicture(profile.avatar_url, null);
+          // GitHub is NOT part of the approved val1 architecture (Entra ID
+          // is the only supported IdP — see CLAUDE.md/SAD). It is left wired
+          // here only because it predates that decision. A null `email` used
+          // to throw here (`profile.email.toLowerCase()` on a GitHub account
+          // with a private/unset public email) and crash sign-in; guarded
+          // now regardless. GitHub tokens carry no Entra `oid`/`tid`, so
+          // under ADR-003 a GitHub-authenticated session can never satisfy
+          // `canonicalUserId()`/`currentUserId()` (fails closed) and can
+          // never be admin (`isAdminOid` requires a real `oid`) — it can
+          // authenticate but not own or access any tenant data.
+          const email = profile.email ? profile.email.toLowerCase() : null;
           const newProfile = {
             ...profile,
-            isAdmin: adminEmails?.includes(profile.email.toLowerCase()),
+            email,
+            isAdmin: false,
             image: image,
           };
           console.log("GitHub profile:", newProfile);
@@ -45,19 +71,27 @@ const configureIdentityProvider = () => {
         tenantId: process.env.AZURE_AD_TENANT_ID!,
         authorization: {
           params: {
-            scope: "openid profile User.Read", 
+            scope: "openid profile User.Read",
           },
         },
         async profile(profile, tokens) {
+          // `email`/`preferred_username` are display/contact attributes only
+          // (ADR-003) — never used for ownership or admin authorization.
           const email = profile.email || profile.preferred_username || "";
           const image = await fetchProfilePicture(`https://graph.microsoft.com/v1.0/me/photos/48x48/$value`, tokens.access_token);
+          // Standard Entra v2 ID token claims, present on the raw decoded
+          // profile object even though they aren't in next-auth's narrow
+          // `AzureADProfile` type (see ADR-003 — the val1 investigation
+          // confirmed both are present for the val1 tenant's admin token).
+          const oid: string | undefined = (profile as { oid?: string }).oid;
+          const tid: string | undefined = (profile as { tid?: string }).tid;
           const newProfile = {
             ...profile,
             email,
             id: profile.sub,
-            isAdmin:
-              adminEmails?.includes(profile.email?.toLowerCase()) ||
-              adminEmails?.includes(profile.preferred_username?.toLowerCase()),
+            oid,
+            tenantId: tid,
+            isAdmin: isAdminOid(oid),
             image: image,
           };
           console.log("Azure AD profile:", newProfile);
@@ -81,15 +115,27 @@ const configureIdentityProvider = () => {
         },
         async authorize(credentials, req): Promise<any> {
           // You can put logic here to validate the credentials and return a user.
-          // We're going to take any username and make a new user with it
-          // Create the id as the hash of the email as per userHashedId (helpers.ts)
+          // We're going to take any username and make a new user with it.
+          // There is no real Entra token here, so `oid`/`tid` are
+          // synthesized (stable per username, NOT real GUIDs) purely so
+          // local dev sessions can satisfy ADR-003's `canonicalUserId()`
+          // fail-closed check without an Azure AD app registration. This is
+          // a local-dev-only affordance — it never runs in production
+          // (`NODE_ENV === "development"` guard above) and is NOT the "no
+          // fallback to email" violation the ADR forbids: production
+          // sessions always come from the Azure AD provider's verified
+          // token claims above, never from this branch.
           const username = credentials?.username || "dev";
           const email = username + "@localhost";
+          const devOid = hashValue(email);
+          const devTenantId = "local-dev";
           const user = {
-            id: hashValue(email),
+            id: devOid,
             name: username,
             email: email,
-            isAdmin: adminEmails?.includes(email),
+            oid: devOid,
+            tenantId: devTenantId,
+            isAdmin: isAdminOid(devOid),
             image: "",
           };
           console.log(
@@ -135,13 +181,31 @@ export const options: NextAuthOptions = {
   providers: [...configureIdentityProvider()],
   callbacks: {
     async jwt({ token, user }) {
+      // `user` is only defined on the FIRST jwt() call right after sign-in
+      // (NextAuth JWT-strategy contract) — every later call re-uses what
+      // was already persisted onto `token` below.
       if (user?.isAdmin) {
         token.isAdmin = user.isAdmin;
       }
+      // ADR-003 — persist the verified oid/tid claims onto the encrypted
+      // session JWT so every subsequent request's session carries the
+      // canonical `${tenantId}:${oid}` identity without a repeated IdP
+      // round trip. Never persist email/preferred_username here for
+      // identity purposes — only `isAdmin`/`oid`/`tenantId` matter for
+      // authorization/ownership; display fields already come from the
+      // session's own `name`/`email`/`image`.
+      if (user?.oid) {
+        token.oid = user.oid;
+      }
+      if (user?.tenantId) {
+        token.tenantId = user.tenantId;
+      }
       return token;
     },
-    async session({ session, token, user }) {
+    async session({ session, token }) {
       session.user.isAdmin = token.isAdmin as boolean;
+      session.user.oid = token.oid as string | undefined;
+      session.user.tenantId = token.tenantId as string | undefined;
       return session;
     },
   },

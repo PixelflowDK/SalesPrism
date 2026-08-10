@@ -1,4 +1,4 @@
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import {
   isDeclaredContentLengthTooLarge,
   MAX_AUDIO_UPLOAD_BYTES,
@@ -23,7 +23,7 @@ export const runtime = "nodejs";
  * comment for the full rationale.
  *
  * Session auth: `middleware.ts`'s `requireAuth` matcher already gates every
- * `/api/speech/:path*` request; `userHashedId()` re-checks explicitly here
+ * `/api/speech/:path*` request; `currentUserId()` re-checks explicitly here
  * too (defense in depth, same pattern as
  * `api/sales-coach/meeting-briefs/[id]/route.ts`) so this route is never
  * reachable un-authenticated even if the middleware matcher ever changes.
@@ -40,7 +40,7 @@ export async function POST(req: Request): Promise<Response> {
   const requestId = newRequestId();
 
   try {
-    await userHashedId();
+    await currentUserId();
   } catch {
     return Response.json(
       { error: true, code: "unauthorized", message: "Sign in required." },

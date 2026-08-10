@@ -108,7 +108,7 @@ export const isFactEvidencedInUserMessage = (candidate: string, userMessage: str
 
 export const runCustomerExtraction = async (input: {
   tenantSlug: string;
-  ownerHashedId: string;
+  ownerId: string;
   userMessage: string;
   assistantMessage: string;
 }): Promise<void> => {
@@ -188,7 +188,7 @@ export const runCustomerExtraction = async (input: {
 
     const result = await UpsertCustomerEntityFromExtraction({
       tenantSlug: input.tenantSlug,
-      ownerHashedId: input.ownerHashedId,
+      ownerId: input.ownerId,
       customerName: insights.customerName,
       newChallenges: [...insights.newChallenges, ...insights.newTriggers],
       newValueAreas: insights.mentionedValueAreas,

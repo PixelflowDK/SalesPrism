@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const userHashedIdMock = vi.hoisted(() => vi.fn());
+const currentUserIdMock = vi.hoisted(() => vi.fn());
 const cleanupSttTranscriptMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/features/auth-page/helpers", () => ({
-  userHashedId: userHashedIdMock,
+  currentUserId: currentUserIdMock,
 }));
 
 vi.mock("@/features/sales-coach/stt-cleanup", () => ({
@@ -27,12 +27,12 @@ const jsonRequest = (body: unknown) =>
 
 describe("POST /api/speech/cleanup — CR2-4 auth recheck + body cap", () => {
   afterEach(() => {
-    userHashedIdMock.mockReset();
+    currentUserIdMock.mockReset();
     cleanupSttTranscriptMock.mockReset();
   });
 
   it("returns 401 and never calls cleanupSttTranscript when there is no session (defense-in-depth against a middleware matcher regression)", async () => {
-    userHashedIdMock.mockRejectedValue(new Error("no session"));
+    currentUserIdMock.mockRejectedValue(new Error("no session"));
 
     const response = await POST(jsonRequest({ rawText: "hello" }));
 
@@ -43,7 +43,7 @@ describe("POST /api/speech/cleanup — CR2-4 auth recheck + body cap", () => {
   });
 
   it("rejects rawText over the character cap with 413 without calling the model (unbounded AOAI token-sink guard)", async () => {
-    userHashedIdMock.mockResolvedValue("hashed-user-id");
+    currentUserIdMock.mockResolvedValue("hashed-user-id");
 
     const oversized = "a".repeat(8001);
     const response = await POST(jsonRequest({ rawText: oversized }));
@@ -55,7 +55,7 @@ describe("POST /api/speech/cleanup — CR2-4 auth recheck + body cap", () => {
   });
 
   it("accepts rawText right at the character cap", async () => {
-    userHashedIdMock.mockResolvedValue("hashed-user-id");
+    currentUserIdMock.mockResolvedValue("hashed-user-id");
     cleanupSttTranscriptMock.mockResolvedValue({ category: "free-chat", cleanedText: "ok" });
 
     const atCap = "a".repeat(8000);
@@ -66,7 +66,7 @@ describe("POST /api/speech/cleanup — CR2-4 auth recheck + body cap", () => {
   });
 
   it("still processes a normal authenticated request under the cap", async () => {
-    userHashedIdMock.mockResolvedValue("hashed-user-id");
+    currentUserIdMock.mockResolvedValue("hashed-user-id");
     cleanupSttTranscriptMock.mockResolvedValue({
       category: "meeting-update",
       cleanedText: "Cleaned text.",

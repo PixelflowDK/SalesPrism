@@ -2,7 +2,7 @@
 import "server-only";
 
 import { RecordPromptEvent } from "@/features/admin/activity-service";
-import { getCurrentUser, userHashedId } from "@/features/auth-page/helpers";
+import { getCurrentUser, currentUserId } from "@/features/auth-page/helpers";
 import { newRequestId, safeLog } from "@/features/common/services/safe-logger";
 import {
   buildSalesCoachSystemPrompt,
@@ -66,7 +66,7 @@ export const ChatAPIEntry = async (
 
   const [user, userId, tenantSlug, history, docs] = await Promise.all([
     getCurrentUser(),
-    userHashedId(),
+    currentUserId(),
     getCurrentTenantSlug(),
     _getHistory(currentChatThread, requestId),
     _getDocuments(currentChatThread, requestId),
@@ -175,7 +175,7 @@ export const ChatAPIEntry = async (
             ? {
                 meetingPrep: createMeetingPrepTool({
                   tenantSlug,
-                  ownerHashedId: userId,
+                  ownerId: userId,
                   chatThreadId: currentChatThread.id,
                 }),
               }
@@ -201,7 +201,7 @@ export const ChatAPIEntry = async (
       // Only counts/lengths/tokens are recorded, never prompt/response text.
       await RecordPromptEvent({
         tenantSlug,
-        actorHashedId: userId,
+        actorId: userId,
         sessionId: currentChatThread.id,
         promptLength: props.message.length,
         tokensUsed: event.totalUsage.totalTokens,
@@ -224,7 +224,7 @@ export const ChatAPIEntry = async (
       // never delay or break the chat response above.
       void runCustomerExtraction({
         tenantSlug,
-        ownerHashedId: userId,
+        ownerId: userId,
         userMessage: props.message,
         assistantMessage: event.text,
       });

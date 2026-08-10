@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // fix under test: a non-owner, non-admin caller must get UNAUTHORIZED with
 // NO thread payload leaked. We mock every Azure/auth boundary
 // chat-thread-service.ts touches so this runs with no network at all, and
-// control userHashedId()/getCurrentUser() per test to simulate "owner",
+// control currentUserId()/getCurrentUser() per test to simulate "owner",
 // "different user", and "admin" callers.
 // ---------------------------------------------------------------------------
 const queryMock = vi.fn();
@@ -24,12 +24,12 @@ vi.mock("@/features/common/services/cosmos", () => ({
 }));
 
 const getCurrentUserMock = vi.fn();
-const userHashedIdMock = vi.fn();
+const currentUserIdMock = vi.fn();
 const userSessionMock = vi.fn();
 
 vi.mock("@/features/auth-page/helpers", () => ({
   getCurrentUser: () => getCurrentUserMock(),
-  userHashedId: () => userHashedIdMock(),
+  currentUserId: () => currentUserIdMock(),
   userSession: () => userSessionMock(),
 }));
 
@@ -93,12 +93,12 @@ describe("EnsureChatThreadOperation — Stage 4 security fix (non-owner/non-admi
   beforeEach(() => {
     queryMock.mockReset();
     getCurrentUserMock.mockReset();
-    userHashedIdMock.mockReset();
+    currentUserIdMock.mockReset();
   });
 
   it("returns UNAUTHORIZED with NO thread payload when the caller is neither the owner nor an admin", async () => {
     mockQueryReturns(makeThread({ userId: OWNER_HASHED_ID }));
-    userHashedIdMock.mockResolvedValue(OTHER_USER_HASHED_ID);
+    currentUserIdMock.mockResolvedValue(OTHER_USER_HASHED_ID);
     getCurrentUserMock.mockResolvedValue({ isAdmin: false });
 
     const result = await EnsureChatThreadOperation(THREAD_ID);
@@ -112,7 +112,7 @@ describe("EnsureChatThreadOperation — Stage 4 security fix (non-owner/non-admi
 
   it("returns OK with the thread when the caller IS the owner", async () => {
     mockQueryReturns(makeThread({ userId: OWNER_HASHED_ID }));
-    userHashedIdMock.mockResolvedValue(OWNER_HASHED_ID);
+    currentUserIdMock.mockResolvedValue(OWNER_HASHED_ID);
     getCurrentUserMock.mockResolvedValue({ isAdmin: false });
 
     const result = await EnsureChatThreadOperation(THREAD_ID);
@@ -125,7 +125,7 @@ describe("EnsureChatThreadOperation — Stage 4 security fix (non-owner/non-admi
 
   it("returns OK with the thread when the caller is an admin, even if not the owner", async () => {
     mockQueryReturns(makeThread({ userId: OWNER_HASHED_ID }));
-    userHashedIdMock.mockResolvedValue(OTHER_USER_HASHED_ID);
+    currentUserIdMock.mockResolvedValue(OTHER_USER_HASHED_ID);
     getCurrentUserMock.mockResolvedValue({ isAdmin: true });
 
     const result = await EnsureChatThreadOperation(THREAD_ID);
@@ -139,7 +139,7 @@ describe("EnsureChatThreadOperation — Stage 4 security fix (non-owner/non-admi
     const result = await EnsureChatThreadOperation(THREAD_ID);
 
     expect(result.status).toBe("NOT_FOUND");
-    // getCurrentUser/userHashedId should not even be consulted once the
+    // getCurrentUser/currentUserId should not even be consulted once the
     // underlying find already failed.
     expect(getCurrentUserMock).not.toHaveBeenCalled();
   });

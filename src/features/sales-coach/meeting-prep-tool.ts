@@ -25,10 +25,10 @@ import { CustomerEntity, VALUE_AREA_LABELS } from "./models";
  */
 export const createMeetingPrepTool = (props: {
   tenantSlug: string;
-  ownerHashedId: string;
+  ownerId: string;
   chatThreadId: string;
 }) => {
-  const { tenantSlug, ownerHashedId, chatThreadId } = props;
+  const { tenantSlug, ownerId, chatThreadId } = props;
 
   return tool({
     description:
@@ -48,7 +48,7 @@ export const createMeetingPrepTool = (props: {
     }),
     execute: async ({ customerName, meetingTopic, conversationContext }) => {
       try {
-        const existingEntity = await FindCustomerEntityByName(tenantSlug, ownerHashedId, customerName);
+        const existingEntity = await FindCustomerEntityByName(tenantSlug, ownerId, customerName);
         const existingCustomerSummary =
           existingEntity.status === "OK" ? summarizeExistingCustomer(existingEntity.response) : undefined;
 
@@ -61,7 +61,7 @@ export const createMeetingPrepTool = (props: {
 
         const saved = await CreateMeetingBrief({
           tenantSlug,
-          ownerHashedId,
+          ownerId,
           chatThreadId,
           customerEntityId: existingEntity.status === "OK" ? existingEntity.response.id : null,
           brief,

@@ -1,7 +1,7 @@
 "use server";
 import "server-only";
 
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { ServerActionResponse } from "@/features/common/server-action-response";
 import {
   AzureAISearchIndexClientInstance,
@@ -142,7 +142,7 @@ export const IndexDocuments = async (
       const docToAdd: AzureSearchDocumentIndex = {
         id: uniqueId(),
         chatThreadId,
-        user: await userHashedId(),
+        user: await currentUserId(),
         pageContent: doc,
         metadata: fileName,
         embedding: [],

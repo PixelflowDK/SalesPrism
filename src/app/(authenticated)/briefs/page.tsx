@@ -11,8 +11,8 @@ export const dynamic = "force-dynamic";
  * threads), reopenable here.
  */
 export default async function BriefsPage() {
-  const { tenantSlug, ownerHashedId } = await getSalesCoachActorContext();
-  const result = await FindMeetingBriefsForOwner(tenantSlug, ownerHashedId);
+  const { tenantSlug, ownerId } = await getSalesCoachActorContext();
+  const result = await FindMeetingBriefsForOwner(tenantSlug, ownerId);
 
   if (result.status !== "OK") {
     return <DisplayError errors={result.errors} />;

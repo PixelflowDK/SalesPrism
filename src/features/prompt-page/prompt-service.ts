@@ -10,7 +10,7 @@ import {
   PromptModelSchema,
 } from "@/features/prompt-page/models";
 import { SqlQuerySpec } from "@azure/cosmos";
-import { getCurrentUser, userHashedId } from "../auth-page/helpers";
+import { getCurrentUser, currentUserId } from "../auth-page/helpers";
 import { ConfigContainer } from "../common/services/cosmos";
 import { uniqueId } from "../common/util";
 
@@ -36,7 +36,7 @@ export const CreatePrompt = async (
       name: props.name,
       description: props.description,
       isPublished: user.isAdmin ? props.isPublished : false,
-      userId: await userHashedId(),
+      userId: await currentUserId(),
       createdAt: new Date(),
       type: "PROMPT",
     };

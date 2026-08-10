@@ -25,12 +25,12 @@ export async function DELETE(
   context: { params: Promise<{ userId: string }> }
 ): Promise<NextResponse> {
   let tenantSlug: string;
-  let performedByHashedId: string;
+  let performedById: string;
 
   try {
     const adminContext = await requireAdminContext();
     tenantSlug = adminContext.tenantSlug;
-    performedByHashedId = adminContext.hashedId;
+    performedById = adminContext.canonicalUserId;
   } catch {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -40,7 +40,7 @@ export async function DELETE(
   const result = await EraseDataSubject({
     tenantSlug,
     subjectUserId: userId,
-    performedByHashedId,
+    performedById,
   });
 
   if (result.status === "NOT_FOUND") {
@@ -54,7 +54,7 @@ export async function DELETE(
 
   return NextResponse.json(
     {
-      subjectHashedId: result.response.subjectHashedId,
+      subjectId: result.response.subjectId,
       timestamp: result.response.timestamp,
       counts: result.response.counts,
     },

@@ -31,7 +31,7 @@ export type SafeLogFields = Partial<{
   tenantSlug: string;
   /** Cosmos chat-thread id (opaque nanoid) — not user-authored content. */
   chatThreadId: string;
-  /** SHA-256 hash of the user's email (see `userHashedId()`) — never the raw email/name. */
+  /** ADR-003 canonical id (`${tenantId}:${oid}`, see `currentUserId()`) — never the raw email/name. */
   userId: string;
   /** HTTP-ish status code, e.g. 401 / 404 / 500. */
   statusCode: number;

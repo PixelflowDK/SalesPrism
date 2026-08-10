@@ -88,7 +88,7 @@ export default async function AdminAnalyticsPage() {
               .slice()
               .sort((a, b) => b.promptsTotal - a.promptsTotal)
               .map((row) => (
-                <TableRow key={row.hashedId}>
+                <TableRow key={row.accountId}>
                   <TableCell className="font-medium">{row.displayName}</TableCell>
                   <TableCell className="text-muted-foreground">{row.email}</TableCell>
                   <TableCell>{row.status}</TableCell>

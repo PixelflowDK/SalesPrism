@@ -1,12 +1,12 @@
 import "server-only";
 
-import { getCurrentUser, userHashedId } from "@/features/auth-page/helpers";
+import { getCurrentUser, currentUserId } from "@/features/auth-page/helpers";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 import { safeLog } from "@/features/common/services/safe-logger";
 
 export type AdminContext = {
   tenantSlug: string;
-  hashedId: string;
+  canonicalUserId: string;
   displayName: string;
   email: string;
 };
@@ -33,11 +33,11 @@ export const requireAdminContext = async (): Promise<AdminContext> => {
   }
 
   const tenantSlug = await getCurrentTenantSlug();
-  const hashedId = await userHashedId();
+  const canonicalUserId = await currentUserId();
 
   return {
     tenantSlug,
-    hashedId,
+    canonicalUserId,
     displayName: user.name,
     email: user.email,
   };

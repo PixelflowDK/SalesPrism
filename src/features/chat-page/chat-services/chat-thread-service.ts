@@ -3,7 +3,7 @@ import "server-only";
 
 import {
   getCurrentUser,
-  userHashedId,
+  currentUserId,
   userSession,
 } from "@/features/auth-page/helpers";
 import { RedirectToChatThread } from "@/features/common/navigation-helpers";
@@ -38,7 +38,7 @@ export const FindAllChatThreadForCurrentUser = async (): Promise<
         },
         {
           name: "@userId",
-          value: await userHashedId(),
+          value: await currentUserId(),
         },
         {
           name: "@isDeleted",
@@ -49,7 +49,7 @@ export const FindAllChatThreadForCurrentUser = async (): Promise<
 
     const { resources } = await HistoryContainer()
       .items.query<ChatThreadModel>(querySpec, {
-        partitionKey: await userHashedId(),
+        partitionKey: await currentUserId(),
       })
       .fetchAll();
     return {
@@ -78,7 +78,7 @@ export const FindChatThreadForCurrentUser = async (
         },
         {
           name: "@userId",
-          value: await userHashedId(),
+          value: await currentUserId(),
         },
         {
           name: "@id",
@@ -181,9 +181,9 @@ export const EnsureChatThreadOperation = async (
   }
 
   const currentUser = await getCurrentUser();
-  const hashedId = await userHashedId();
+  const canonicalUserId = await currentUserId();
 
-  if (currentUser.isAdmin || response.response.userId === hashedId) {
+  if (currentUser.isAdmin || response.response.userId === canonicalUserId) {
     return response;
   }
 
@@ -289,7 +289,7 @@ export const CreateChatThread = async (): Promise<
     const modelToSave: ChatThreadModel = {
       name: NEW_CHAT_NAME,
       useName: (await userSession())!.name,
-      userId: await userHashedId(),
+      userId: await currentUserId(),
       id: uniqueId(),
       createdAt: new Date(),
       lastMessageAt: new Date(),

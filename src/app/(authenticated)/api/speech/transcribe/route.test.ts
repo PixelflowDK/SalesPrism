@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // `vi.hoisted` so these mock fns exist before the `vi.mock` factories below
 // run (which are themselves hoisted above the imports by Vitest).
-const userHashedIdMock = vi.hoisted(() => vi.fn());
+const currentUserIdMock = vi.hoisted(() => vi.fn());
 const isSpeechConfiguredMock = vi.hoisted(() => vi.fn());
 const transcribeAudioMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/features/auth-page/helpers", () => ({
-  userHashedId: userHashedIdMock,
+  currentUserId: currentUserIdMock,
 }));
 
 vi.mock("@/features/common/services/azure-speech", () => ({
@@ -52,13 +52,13 @@ const makeUnboundedStream = (chunkSize: number) => {
 
 describe("POST /api/speech/transcribe — CR2-1 oversized-body DoS guard", () => {
   afterEach(() => {
-    userHashedIdMock.mockReset();
+    currentUserIdMock.mockReset();
     isSpeechConfiguredMock.mockReset();
     transcribeAudioMock.mockReset();
   });
 
   it("rejects an oversized, Content-Length-less streamed upload with 413 without ever fully buffering it or calling Azure Speech", async () => {
-    userHashedIdMock.mockResolvedValue("hashed-user-id");
+    currentUserIdMock.mockResolvedValue("hashed-user-id");
     isSpeechConfiguredMock.mockReturnValue(true);
 
     const chunkSize = 64 * 1024; // 64KB per chunk
@@ -90,7 +90,7 @@ describe("POST /api/speech/transcribe — CR2-1 oversized-body DoS guard", () =>
   });
 
   it("still returns 401 before ever touching the body when unauthenticated", async () => {
-    userHashedIdMock.mockRejectedValue(new Error("no session"));
+    currentUserIdMock.mockRejectedValue(new Error("no session"));
     isSpeechConfiguredMock.mockReturnValue(true);
 
     const probe = makeUnboundedStream(1024);

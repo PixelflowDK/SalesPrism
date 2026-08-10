@@ -1,7 +1,7 @@
 "use server";
 import "server-only";
 
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { ServerActionResponse } from "@/features/common/server-action-response";
 import { uniqueId } from "@/features/common/util";
 import { SqlQuerySpec } from "@azure/cosmos";
@@ -27,7 +27,7 @@ export const FindTopChatMessagesForCurrentUser = async (
         },
         {
           name: "@userId",
-          value: await userHashedId(),
+          value: await currentUserId(),
         },
         {
           name: "@isDeleted",
@@ -78,7 +78,7 @@ export const FindAllChatMessagesForCurrentUser = async (
         },
         {
           name: "@userId",
-          value: await userHashedId(),
+          value: await currentUserId(),
         },
         {
           name: "@isDeleted",
@@ -120,7 +120,7 @@ export const CreateChatMessage = async ({
   chatThreadId: string;
   multiModalImage?: string;
 }): Promise<ServerActionResponse<ChatMessageModel>> => {
-  const userId = await userHashedId();
+  const userId = await currentUserId();
   const modelToSave: ChatMessageModel = {
     id: uniqueId(),
     createdAt: new Date(),

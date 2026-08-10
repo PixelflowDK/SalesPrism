@@ -8,7 +8,7 @@ import { CustomerContact } from "./models";
 // query-building/merge logic under test and (b) INSPECT exactly what query
 // spec + partition key each exported function sent to Cosmos — which is the
 // whole point of the isolation tests below (the F-03 per-seller isolation
-// guarantee: every query MUST include both tenantSlug and ownerHashedId).
+// guarantee: every query MUST include both tenantSlug and ownerId).
 // ---------------------------------------------------------------------------
 const queryMock = vi.fn();
 const itemReadMock = vi.fn();
@@ -131,12 +131,12 @@ describe("mergeContacts", () => {
 
 // ---------------------------------------------------------------------------
 // Isolation tests — F-03 per-seller isolation guarantee (models.ts module
-// doc: "omitting ownerHashedId from a query filter is a cross-user data
+// doc: "omitting ownerId from a query filter is a cross-user data
 // leakage bug"). Every exported Cosmos-backed query function is parametrized
-// here and asserted to include BOTH tenantSlug and ownerHashedId in what it
+// here and asserted to include BOTH tenantSlug and ownerId in what it
 // sends to Cosmos.
 // ---------------------------------------------------------------------------
-describe("customer-entity-service isolation: every query scopes by tenantSlug AND ownerHashedId", () => {
+describe("customer-entity-service isolation: every query scopes by tenantSlug AND ownerId", () => {
   beforeEach(() => {
     queryMock.mockReset();
     itemReadMock.mockReset();
@@ -149,7 +149,7 @@ describe("customer-entity-service isolation: every query scopes by tenantSlug AN
   const TENANT = "dsv";
   const OWNER = "hashed-owner-abc";
 
-  it("FindCustomerEntitiesForOwner: query params include tenantSlug and ownerHashedId, partitionKey is tenantSlug", async () => {
+  it("FindCustomerEntitiesForOwner: query params include tenantSlug and ownerId, partitionKey is tenantSlug", async () => {
     await FindCustomerEntitiesForOwner(TENANT, OWNER);
 
     expect(queryMock).toHaveBeenCalledTimes(1);
@@ -160,19 +160,19 @@ describe("customer-entity-service isolation: every query scopes by tenantSlug AN
     );
 
     expect(paramNames).toEqual(
-      expect.arrayContaining(["@tenantSlug", "@ownerHashedId"])
+      expect.arrayContaining(["@tenantSlug", "@ownerId"])
     );
     expect(paramValues["@tenantSlug"]).toBe(TENANT);
-    expect(paramValues["@ownerHashedId"]).toBe(OWNER);
+    expect(paramValues["@ownerId"]).toBe(OWNER);
     expect(options).toEqual({ partitionKey: TENANT });
     // SECURITY: the raw SQL text itself must reference both filter columns —
     // a param that's defined but never used in `query` would not actually
     // scope anything.
     expect(querySpec.query).toMatch(/r\.tenantSlug=@tenantSlug/);
-    expect(querySpec.query).toMatch(/r\.ownerHashedId=@ownerHashedId/);
+    expect(querySpec.query).toMatch(/r\.ownerId=@ownerId/);
   });
 
-  it("FindCustomerEntityByName: query params include tenantSlug and ownerHashedId", async () => {
+  it("FindCustomerEntityByName: query params include tenantSlug and ownerId", async () => {
     await FindCustomerEntityByName(TENANT, OWNER, "Acme");
 
     const [querySpec] = queryMock.mock.calls[0];
@@ -180,16 +180,16 @@ describe("customer-entity-service isolation: every query scopes by tenantSlug AN
       querySpec.parameters.map((p: { name: string; value: unknown }) => [p.name, p.value])
     );
     expect(paramValues["@tenantSlug"]).toBe(TENANT);
-    expect(paramValues["@ownerHashedId"]).toBe(OWNER);
-    expect(querySpec.query).toMatch(/r\.ownerHashedId=@ownerHashedId/);
+    expect(paramValues["@ownerId"]).toBe(OWNER);
+    expect(querySpec.query).toMatch(/r\.ownerId=@ownerId/);
   });
 
-  it("FindCustomerEntityById: re-checks tenantSlug AND ownerHashedId on the resource even though the read is already partition-scoped", async () => {
+  it("FindCustomerEntityById: re-checks tenantSlug AND ownerId on the resource even though the read is already partition-scoped", async () => {
     itemReadMock.mockResolvedValue({
       resource: {
         id: "customer-1",
         tenantSlug: TENANT,
-        ownerHashedId: "SOMEONE-ELSE",
+        ownerId: "SOMEONE-ELSE",
         type: "SALES_COACH_CUSTOMER_ENTITY",
       },
     });
@@ -199,13 +199,13 @@ describe("customer-entity-service isolation: every query scopes by tenantSlug AN
     // SECURITY: a point-read by id, scoped only by the Cosmos partition key
     // (tenantSlug), is NOT enough — a different seller in the SAME tenant
     // could otherwise read another seller's customer by guessing/enumerating
-    // ids. The ownerHashedId mismatch above must produce NOT_FOUND, not the
+    // ids. The ownerId mismatch above must produce NOT_FOUND, not the
     // resource.
     expect(result.status).toBe("NOT_FOUND");
     expect(itemMock).toHaveBeenCalledWith("customer-1", TENANT);
   });
 
-  it("FindCustomerEntityById: returns the resource only when both tenantSlug and ownerHashedId match", async () => {
+  it("FindCustomerEntityById: returns the resource only when both tenantSlug and ownerId match", async () => {
     const now = new Date().toISOString();
     itemReadMock.mockResolvedValue({
       resource: {
@@ -213,7 +213,7 @@ describe("customer-entity-service isolation: every query scopes by tenantSlug AN
         type: "SALES_COACH_CUSTOMER_ENTITY",
         userId: TENANT,
         tenantSlug: TENANT,
-        ownerHashedId: OWNER,
+        ownerId: OWNER,
         customerName: "Acme",
         customerNameNormalized: "acme",
         contacts: [],
@@ -230,19 +230,19 @@ describe("customer-entity-service isolation: every query scopes by tenantSlug AN
     expect(result.status).toBe("OK");
   });
 
-  it("CreateCustomerEntity: persists the given tenantSlug and ownerHashedId on the created document", async () => {
+  it("CreateCustomerEntity: persists the given tenantSlug and ownerId on the created document", async () => {
     itemsCreateMock.mockImplementation(async (doc: unknown) => ({ resource: doc }));
 
     const result = await CreateCustomerEntity({
       tenantSlug: TENANT,
-      ownerHashedId: OWNER,
+      ownerId: OWNER,
       customerName: "Acme",
     });
 
     expect(result.status).toBe("OK");
     const [createdDoc] = itemsCreateMock.mock.calls[0];
     expect(createdDoc.tenantSlug).toBe(TENANT);
-    expect(createdDoc.ownerHashedId).toBe(OWNER);
+    expect(createdDoc.ownerId).toBe(OWNER);
   });
 
   it("UpdateCustomerEntityInteraction: refuses to update when the owner does not match (via FindCustomerEntityById's re-check)", async () => {
@@ -250,7 +250,7 @@ describe("customer-entity-service isolation: every query scopes by tenantSlug AN
       resource: {
         id: "customer-1",
         tenantSlug: TENANT,
-        ownerHashedId: "SOMEONE-ELSE",
+        ownerId: "SOMEONE-ELSE",
         type: "SALES_COACH_CUSTOMER_ENTITY",
       },
     });

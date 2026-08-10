@@ -5,19 +5,10 @@ import { DefaultAzureCredential } from "@azure/identity";
 const DB_NAME = process.env.AZURE_COSMOSDB_DB_NAME || "chat";
 const CONTAINER_NAME = process.env.AZURE_COSMOSDB_CONTAINER_NAME || "history";
 const CONFIG_CONTAINER_NAME = process.env.AZURE_COSMOSDB_CONFIG_CONTAINER_NAME || "config";
-const USE_MANAGED_IDENTITIES = process.env.USE_MANAGED_IDENTITIES === "true";
 
-const getCosmosCredential = () => {
-  if (USE_MANAGED_IDENTITIES) {
-    return new DefaultAzureCredential();
-  }
-  const key = process.env.AZURE_COSMOSDB_KEY;
-  if (!key) {
-    throw new Error("Azure Cosmos DB key is not provided in environment variables.");
-  }
-  return key;
-};
-
+// Zero-secrets Cosmos DB access (SAD §5.3, CLAUDE.md "Never Violated" list; SR-002/H-1).
+// No Cosmos DB key environment variable may ever be read here — DefaultAzureCredential
+// (managed identity) only, matching azure-ai.ts / document-intelligence.ts / azure-speech.ts.
 export const CosmosInstance = () => {
   const endpoint = process.env.AZURE_COSMOSDB_URI;
 
@@ -27,12 +18,7 @@ export const CosmosInstance = () => {
     );
   }
 
-  const credential = getCosmosCredential();
-  if (credential instanceof DefaultAzureCredential) {
-    return new CosmosClient({ endpoint, aadCredentials: credential });
-  } else {
-    return new CosmosClient({ endpoint, key: credential });
-  }
+  return new CosmosClient({ endpoint, aadCredentials: new DefaultAzureCredential() });
 };
 
 export const ConfigContainer = () => {

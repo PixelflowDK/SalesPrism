@@ -1,4 +1,4 @@
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { cleanupSttTranscript } from "@/features/sales-coach/stt-cleanup";
 import { newRequestId, safeLog } from "@/features/common/services/safe-logger";
 
@@ -29,7 +29,7 @@ const MAX_RAW_TEXT_CHARACTERS = 8000;
  * user could turn this into an unbounded Azure OpenAI token sink, and if
  * the middleware matcher ever regressed this route would be anonymously
  * reachable. Same defense-in-depth pattern as `transcribe/route.ts` /
- * `synthesize/route.ts`: `userHashedId()` re-checks the session in-handler,
+ * `synthesize/route.ts`: `currentUserId()` re-checks the session in-handler,
  * and `MAX_RAW_TEXT_CHARACTERS` bounds the model call regardless of who's
  * calling.
  */
@@ -37,7 +37,7 @@ export async function POST(req: Request): Promise<Response> {
   const requestId = newRequestId();
 
   try {
-    await userHashedId();
+    await currentUserId();
   } catch {
     return Response.json(
       { error: true, code: "unauthorized", message: "Sign in required." },

@@ -47,7 +47,7 @@ export const ActivityEventSchema = z.object({
   userId: z.string(),
   tenantSlug: z.string(),
   /** SHA-256 hash of the acting user's email — never the raw email/name. */
-  actorHashedId: z.string(),
+  actorId: z.string(),
   eventType: ActivityEventTypeSchema,
   timestamp: z.string(),
   metadata: ActivityEventMetadataSchema,
@@ -70,7 +70,7 @@ export type ActivityEvent = z.infer<typeof ActivityEventSchema>;
 /** Best-effort event write — analytics must never break the feature it observes. */
 const recordEvent = async (
   tenantSlug: string,
-  actorHashedId: string,
+  actorId: string,
   eventType: ActivityEventType,
   metadata: ActivityEventMetadata
 ): Promise<void> => {
@@ -80,7 +80,7 @@ const recordEvent = async (
       type: ACTIVITY_EVENT_ATTRIBUTE,
       userId: tenantSlug,
       tenantSlug,
-      actorHashedId,
+      actorId,
       eventType,
       timestamp: new Date().toISOString(),
       metadata,
@@ -94,13 +94,13 @@ const recordEvent = async (
 
 export const RecordPromptEvent = async (props: {
   tenantSlug: string;
-  actorHashedId: string;
+  actorId: string;
   sessionId: string;
   promptLength: number;
   tokensUsed?: number;
   modelTier?: string;
 }): Promise<void> =>
-  recordEvent(props.tenantSlug, props.actorHashedId, "prompt", {
+  recordEvent(props.tenantSlug, props.actorId, "prompt", {
     sessionId: props.sessionId,
     promptLength: props.promptLength,
     tokensUsed: props.tokensUsed,
@@ -109,13 +109,13 @@ export const RecordPromptEvent = async (props: {
 
 export const RecordUploadEvent = async (props: {
   tenantSlug: string;
-  actorHashedId: string;
-}): Promise<void> => recordEvent(props.tenantSlug, props.actorHashedId, "upload", {});
+  actorId: string;
+}): Promise<void> => recordEvent(props.tenantSlug, props.actorId, "upload", {});
 
 export const RecordLoginEvent = async (props: {
   tenantSlug: string;
-  actorHashedId: string;
-}): Promise<void> => recordEvent(props.tenantSlug, props.actorHashedId, "login", {});
+  actorId: string;
+}): Promise<void> => recordEvent(props.tenantSlug, props.actorId, "login", {});
 
 const INACTIVE_THRESHOLD_DAYS = 30;
 
@@ -127,7 +127,10 @@ export type ActivityOverview = {
 };
 
 export type PerUserActivity = {
-  hashedId: string;
+  /** `UserAccount` Cosmos doc id — always present and unique, unlike `canonicalUserId` below. Use this for a React list key. */
+  accountId: string;
+  /** ADR-003 canonical id, or `null` for an admin-pre-provisioned account that has never signed in (see `user-service.ts`'s `CreateUser`) — such an account has no activity events by construction (nothing could be scoped to a null id). */
+  canonicalUserId: string | null;
   displayName: string;
   email: string;
   status: UserAccount["status"];
@@ -221,7 +224,7 @@ export const GetPerUserActivity = async (
   const events = eventsResponse.response;
 
   const rows: PerUserActivity[] = usersResponse.response.map((user) => {
-    const ownEvents = events.filter((e) => e.actorHashedId === user.hashedId);
+    const ownEvents = events.filter((e) => e.actorId === user.canonicalUserId);
     const promptsTotal = ownEvents.filter((e) => e.eventType === "prompt").length;
     const promptsThisMonth = ownEvents.filter(
       (e) => e.eventType === "prompt" && isSameMonth(e.timestamp, now)
@@ -233,7 +236,8 @@ export const GetPerUserActivity = async (
     );
 
     return {
-      hashedId: user.hashedId,
+      accountId: user.id,
+      canonicalUserId: user.canonicalUserId,
       displayName: user.displayName,
       email: user.email,
       status: user.status,

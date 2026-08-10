@@ -1,7 +1,7 @@
 "use server";
 import "server-only";
 
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { safeLog } from "@/features/common/services/safe-logger";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 import { revalidatePath } from "next/cache";
@@ -13,7 +13,7 @@ import { ValueArea, ValueAreaSchema } from "../models";
 
 /**
  * `/customers/[id]` edit-form server actions. Every action re-derives
- * `tenantSlug` + the current seller's `ownerHashedId` from the session —
+ * `tenantSlug` + the current seller's `ownerId` from the session —
  * a client can never supply either, matching the `admin/actions/*` pattern.
  */
 
@@ -33,7 +33,7 @@ export const updateCustomerProfileAction = async (
   formData: FormData
 ): Promise<void> => {
   const tenantSlug = await getCurrentTenantSlug();
-  const ownerHashedId = await userHashedId();
+  const ownerId = await currentUserId();
 
   const customerName = String(formData.get("customerName") ?? "").trim();
   const knownChallenges = parseLines(String(formData.get("knownChallenges") ?? ""));
@@ -43,7 +43,7 @@ export const updateCustomerProfileAction = async (
     throw new Error("Customer name is required.");
   }
 
-  const result = await UpdateCustomerEntity(tenantSlug, ownerHashedId, customerId, {
+  const result = await UpdateCustomerEntity(tenantSlug, ownerId, customerId, {
     customerName,
     knownChallenges,
     valueAreas,
@@ -64,9 +64,9 @@ export const updateContactNotesAction = async (
   formData: FormData
 ): Promise<void> => {
   const tenantSlug = await getCurrentTenantSlug();
-  const ownerHashedId = await userHashedId();
+  const ownerId = await currentUserId();
 
-  const existing = await FindCustomerEntityById(tenantSlug, ownerHashedId, customerId);
+  const existing = await FindCustomerEntityById(tenantSlug, ownerId, customerId);
   if (existing.status !== "OK") {
     throw new Error(existing.status === "NOT_FOUND" ? "Customer not found." : "Unable to load customer.");
   }
@@ -76,7 +76,7 @@ export const updateContactNotesAction = async (
     contact.name === contactName ? { ...contact, notes } : contact
   );
 
-  const result = await UpdateCustomerEntity(tenantSlug, ownerHashedId, customerId, {
+  const result = await UpdateCustomerEntity(tenantSlug, ownerId, customerId, {
     contacts: updatedContacts,
   });
 

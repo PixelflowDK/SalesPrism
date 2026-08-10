@@ -10,9 +10,9 @@ interface Props {
 
 export default async function BriefDetailPage(props: Props) {
   const { id } = await props.params;
-  const { tenantSlug, ownerHashedId } = await getSalesCoachActorContext();
+  const { tenantSlug, ownerId } = await getSalesCoachActorContext();
 
-  const result = await FindMeetingBriefById(tenantSlug, ownerHashedId, id);
+  const result = await FindMeetingBriefById(tenantSlug, ownerId, id);
   if (result.status !== "OK") {
     return <DisplayError errors={result.errors} />;
   }

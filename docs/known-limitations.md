@@ -4,6 +4,7 @@
 
 | Date added | Limitation | Impact | Revisit when |
 |---|---|---|---|
+| 2026-08-10 | ADR-003 identity migration (`hashValue(email)` → `${tenantId}:${oid}`) is not backward-compatible; any pre-existing document keyed by the old email hash is unreachable under the new scheme | None for val1 today (interactive login has never been run — see "Authentication verification" below — so no real user-owned Cosmos/AI-Search documents exist to strand). Would matter on a tenant with real history. | Never, for val1 pre-migration data (accepted, see "ADR-003 identity migration" section below). If this scheme is ever changed again on a tenant with real user data, a real migration script is required — see that section for what it would need. |
 | 2026-07-30 | Professional (gpt-5.4) and Enterprise (gpt-5.5) model tiers are quota-gated in DataZoneStandard westeurope — only gpt-5.4-mini is currently granted | New customers can only be provisioned on the Standard tier until quota is approved | Quota increase request approved (see `azure-quotas` skill) |
 | 2026-07-30 | Embeddings run on text-embedding-3-small; text-embedding-3-large is quota-gated | Slightly lower retrieval quality vs. target embedding model | text-embedding-3-large quota granted (ADR-001) |
 | 2026-07-30 | Entra External ID CIAM tenant not yet created | Username/Password auth method (Auth Method B, SAD §8.3) cannot be provisioned yet — only Entra ID SSO available | CIAM tenant provisioned in Phase D |
@@ -136,6 +137,64 @@ subscription 1") surfaced gaps not previously documented:
   the control is one flag away from ready, which the dead-parameter finding above shows is not
   true. Recommend this be surfaced explicitly to any customer whose legal team reviews the erasure
   story, not left implicit.
+
+## ADR-003 identity migration (2026-08-10) — email-hash → canonical oid, no data migration performed
+
+`docs/architecture-decisions/ADR-003-canonical-identity.md` replaces ownership derived from
+`hashValue(email-fallback-chain)` with the verified Entra `${tenantId}:${oid}` claim pair
+end-to-end: chat threads/messages/documents/citations, AI Search RAG filters, customer entities,
+meeting briefs, admin authorization (`ADMIN_OBJECT_IDS` replaces `ADMIN_EMAIL_ADDRESS`), activity
+events, and GDPR erasure targeting. Every `*HashedId` field was renamed (`ownerHashedId`→`ownerId`,
+`actorHashedId`→`actorId`, `UserAccount.hashedId`→`canonicalUserId`, etc.) so no field name still
+implies a hash of anything.
+
+**No data-migration script was written, deliberately.** Per the ADR's own rationale and
+`docs/reviews/val1-login-flow-verification.md` Part B (still pending the operator), the
+interactive login flow has never been completed against val1 — there is no evidence any real
+Cosmos document was ever written under the old `hashValue(email)` scheme (val1's Cosmos/AI Search
+stores hold only synthetic seed/test fixtures from earlier validation stages, never a document
+produced by an actual authenticated end-user session). Writing a migration script against data
+that verifiably doesn't exist would be pure speculation, and the ADR explicitly identifies "now"
+(before any real customer data exists) as the cheapest point this decision will ever have.
+
+**Consequence, accepted:** any document that *does* happen to exist in val1 today keyed by an old
+`hashValue(email)`-style value (partition key, `ownerId`/`actorId`/`canonicalUserId` field, or an
+AI Search `user` filter value) is now unreachable through the app — the new canonical id a real
+login produces will never match it. This is intentional, not a bug: preserving reachability would
+mean keeping the broken "ownership can silently change between logins" scheme alive for exactly
+the class of document the ADR exists to stop trusting.
+
+**If this is ever needed on a tenant with real user data** (i.e., a customer goes live under the
+old scheme before it can be replaced, or a similar identity-key change is made again later), a
+real migration would need to, per tenant:
+
+1. **Build the old→new id map.** For every user who has ever logged in, resolve their historical
+   `hashValue(email)` value(s) — note the OLD scheme itself was unstable (`profile.email ||
+   profile.preferred_username`), so a single user could have MULTIPLE old hash values on file if
+   their effective claim ever changed between logins; all of them must map to the SAME new
+   `${tenantId}:${oid}`.
+2. **Rewrite Cosmos partition keys and owner fields.** `HistoryContainer` documents
+   (`ChatThreadModel`/`ChatMessageModel`/`ChatDocumentModel`/`ChatCitationModel`) are partitioned
+   on `userId` itself — Cosmos does not support an in-place partition-key rewrite, so this is a
+   read-old/write-new-under-new-partition-key/delete-old operation per document, not a field
+   update. `ConfigContainer` documents (`CustomerEntity.ownerId`, `MeetingBriefDocument.ownerId`,
+   `ActivityEvent.actorId`) are partitioned on `tenantSlug` (unaffected) with the owner as a
+   regular field, so those are a simpler field-value rewrite.
+3. **Re-index every AI Search document.** `AzureSearchDocumentIndex.user` (the RAG authorization
+   filter value, `azure-ai-search.ts`) must be rewritten per the same map — index-document `user`
+   values cannot be bulk-renamed via the Search REST API; this is delete-and-re-upload (the
+   `embedding` vector can be reused as-is, only the identity field changes) or a full
+   re-embed-and-reindex if simpler to operate.
+4. **Reconcile `UserAccount` directory docs.** `user-service.ts`'s `EnsureUserOnLogin` already
+   handles ONE piece of this going forward (adopting an admin-pre-provisioned "invite by email"
+   doc on first real login — see that file's `findPendingInviteByEmail`), but a bulk migration of
+   already-populated `UserAccount.canonicalUserId` values from old hashes to new canonical ids
+   would still need a one-time script.
+5. **Verify with the isolation test suite.** `customer-entity-service.test.ts`,
+   `meeting-brief-service.test.ts`, `chat-thread-service.test.ts`, and
+   `gdpr-erasure-service.test.ts`'s cross-user/cross-tenant assertions are the regression backstop
+   that a migration didn't cross-wire two users' data — run them (or tenant-specific equivalents)
+   against a migration dry-run before any production cutover.
 
 ## SR-005 dependency CVEs — residual (2026-08-10)
 7 remain (2 HIGH, 5 MODERATE) after clearing both CRITICALs. Full per-CVE reachability evidence: docs/reviews/sr-005-cve-triage.md.

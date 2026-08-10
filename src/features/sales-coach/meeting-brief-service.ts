@@ -18,7 +18,7 @@ import { LinkMeetingBriefToCustomer } from "./customer-entity-service";
 
 /**
  * Saved MeetingBrief persistence — F-01 "Brief kan gemmes og genåbnes".
- * Same `tenantSlug` partition / `ownerHashedId` scoping convention as
+ * Same `tenantSlug` partition / `ownerId` scoping convention as
  * `customer-entity-service.ts` — see models.ts module doc.
  */
 
@@ -41,7 +41,7 @@ const parseMeetingBriefDocument = (
  */
 export const CreateMeetingBrief = async (input: {
   tenantSlug: string;
-  ownerHashedId: string;
+  ownerId: string;
   chatThreadId: string;
   customerEntityId: string | null;
   brief: MeetingBrief;
@@ -53,7 +53,7 @@ export const CreateMeetingBrief = async (input: {
       type: MEETING_BRIEF_ATTRIBUTE,
       userId: input.tenantSlug,
       tenantSlug: input.tenantSlug,
-      ownerHashedId: input.ownerHashedId,
+      ownerId: input.ownerId,
       chatThreadId: input.chatThreadId,
       customerEntityId: input.customerEntityId,
       brief: input.brief,
@@ -72,7 +72,7 @@ export const CreateMeetingBrief = async (input: {
 
     await LinkMeetingBriefToCustomer({
       tenantSlug: input.tenantSlug,
-      ownerHashedId: input.ownerHashedId,
+      ownerId: input.ownerId,
       customerName: input.brief.customerName,
       meetingBriefId: resource.id,
     });
@@ -87,16 +87,16 @@ export const CreateMeetingBrief = async (input: {
 /** All saved briefs for the current seller — powers the `/briefs` list route. */
 export const FindMeetingBriefsForOwner = async (
   tenantSlug: string,
-  ownerHashedId: string
+  ownerId: string
 ): Promise<ServerActionResponse<MeetingBriefDocument[]>> => {
   try {
     const querySpec: SqlQuerySpec = {
       query:
-        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.ownerHashedId=@ownerHashedId ORDER BY r.createdAt DESC",
+        "SELECT * FROM root r WHERE r.type=@type AND r.tenantSlug=@tenantSlug AND r.ownerId=@ownerId ORDER BY r.createdAt DESC",
       parameters: [
         { name: "@type", value: MEETING_BRIEF_ATTRIBUTE },
         { name: "@tenantSlug", value: tenantSlug },
-        { name: "@ownerHashedId", value: ownerHashedId },
+        { name: "@ownerId", value: ownerId },
       ],
     };
 
@@ -112,20 +112,20 @@ export const FindMeetingBriefsForOwner = async (
 };
 
 /**
- * Single brief by id — re-checks `ownerHashedId` even after the
+ * Single brief by id — re-checks `ownerId` even after the
  * partition-scoped point read (defense in depth, same pattern as
  * `FindCustomerEntityById`). Used by both the `/briefs/[id]` page (server
  * render) and the chat-stream `{% meeting-brief %}` embed's API route.
  */
 export const FindMeetingBriefById = async (
   tenantSlug: string,
-  ownerHashedId: string,
+  ownerId: string,
   id: string
 ): Promise<ServerActionResponse<MeetingBriefDocument>> => {
   try {
     const { resource } = await ConfigContainer().item(id, tenantSlug).read<MeetingBriefDocument>();
 
-    if (!resource || resource.tenantSlug !== tenantSlug || resource.ownerHashedId !== ownerHashedId) {
+    if (!resource || resource.tenantSlug !== tenantSlug || resource.ownerId !== ownerId) {
       return { status: "NOT_FOUND", errors: [{ message: "Meeting brief not found." }] };
     }
 

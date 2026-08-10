@@ -3,7 +3,7 @@ import "server-only";
 
 import {
   getCurrentUser,
-  userHashedId,
+  currentUserId,
   userSession,
 } from "@/features/auth-page/helpers";
 import { UpsertChatThread } from "@/features/chat-page/chat-services/chat-thread-service";
@@ -98,7 +98,7 @@ export const CreateExtension = async (
       executionSteps: inputModel.executionSteps,
       description: inputModel.description,
       isPublished: user.isAdmin ? inputModel.isPublished : false,
-      userId: await userHashedId(),
+      userId: await currentUserId(),
       createdAt: new Date(),
       type: "EXTENSION",
       functions: inputModel.functions,
@@ -165,10 +165,10 @@ export const EnsureExtensionOperation = async (
 ): Promise<ServerActionResponse<ExtensionModel>> => {
   const extensionResponse = await FindExtensionByID(id);
   const currentUser = await getCurrentUser();
-  const hashedId = await userHashedId();
+  const canonicalUserId = await currentUserId();
 
   if (extensionResponse.status === "OK") {
-    if (currentUser.isAdmin || extensionResponse.response.userId === hashedId) {
+    if (currentUser.isAdmin || extensionResponse.response.userId === canonicalUserId) {
       return extensionResponse;
     }
   }
@@ -353,7 +353,7 @@ export const FindAllExtensionForCurrentUser = async (): Promise<
         },
         {
           name: "@userId",
-          value: await userHashedId(),
+          value: await currentUserId(),
         },
       ],
     };
@@ -389,7 +389,7 @@ export const CreateChatWithExtension = async (
     const response = await UpsertChatThread({
       name: extension.name,
       useName: (await userSession())!.name,
-      userId: await userHashedId(),
+      userId: await currentUserId(),
       id: "",
       createdAt: new Date(),
       lastMessageAt: new Date(),

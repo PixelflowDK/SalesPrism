@@ -17,7 +17,7 @@ vi.mock("@/features/common/services/azure-ai", () => ({
 }));
 
 vi.mock("@/features/auth-page/helpers", () => ({
-  userHashedId: vi.fn(),
+  currentUserId: vi.fn(),
 }));
 
 vi.mock("@/features/common/util", () => ({

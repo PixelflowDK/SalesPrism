@@ -1,4 +1,4 @@
-import { userHashedId } from "@/features/auth-page/helpers";
+import { currentUserId } from "@/features/auth-page/helpers";
 import { ServerActionResponse } from "@/features/common/server-action-response";
 import { HistoryContainer } from "@/features/common/services/cosmos";
 import { uniqueId } from "@/features/common/util";
@@ -45,7 +45,7 @@ export const CreateCitations = async (
       content: model,
       id: uniqueId(),
       type: CHAT_CITATION_ATTRIBUTE,
-      userId: userId || (await userHashedId()),
+      userId: userId || (await currentUserId()),
     });
 
     items.push(res);
@@ -72,7 +72,7 @@ export const FindCitationByID = async (
         },
         {
           name: "@userId",
-          value: await userHashedId(),
+          value: await currentUserId(),
         },
       ],
     };

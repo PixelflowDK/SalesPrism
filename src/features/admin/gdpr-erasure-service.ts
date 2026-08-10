@@ -36,13 +36,13 @@ import { FindUserById, UserAccount, UserAccountSchema, USER_ACCOUNT_ATTRIBUTE } 
  * repo, as of this file's introduction) ──────────────────────────────────
  *
  * ERASABLE_DOCUMENT_TYPES — hard-deleted, scoped by tenantSlug AND the
- * subject's hashed id:
+ * subject's ADR-003 canonical id (`${tenantId}:${oid}`):
  *   - CHAT_THREAD / CHAT_MESSAGE / CHAT_DOCUMENT / CHAT_CITATION
  *     (`HistoryContainer`, chat-services/models.ts) — scoped by `userId`.
  *   - SALES_COACH_CUSTOMER_ENTITY / SALES_COACH_MEETING_BRIEF
- *     (`ConfigContainer`, sales-coach/models.ts) — scoped by `ownerHashedId`.
+ *     (`ConfigContainer`, sales-coach/models.ts) — scoped by `ownerId`.
  *   - ACTIVITY_EVENT (`ConfigContainer`, admin/activity-service.ts) —
- *     scoped by `actorHashedId`. (Also covered by a 30-day TTL —
+ *     scoped by `actorId`. (Also covered by a 30-day TTL —
  *     see cosmos-retention.ts — this makes Art. 17 immediate rather than
  *     waiting up to 30 days.)
  *   - AI Search index documents — scoped by the `user` field, the SAME
@@ -141,10 +141,10 @@ export const GdprErasureAuditRecordSchema = z.object({
   /** Cosmos partition key — set to `tenantSlug`, same convention as every other `ConfigContainer` document. */
   userId: z.string(),
   tenantSlug: z.string(),
-  /** SHA-256 hash of the admin who triggered the erasure — never the raw email/name. */
-  performedByHashedId: z.string(),
-  /** SHA-256 hash of the erased data subject — never the raw email/name. This audit record contains NO OTHER PII. */
-  subjectHashedId: z.string(),
+  /** ADR-003 canonical id (`${tenantId}:${oid}`) of the admin who triggered the erasure — never the raw email/name. */
+  performedById: z.string(),
+  /** ADR-003 canonical id of the erased data subject, or the literal string `"never-logged-in"` for a pre-provisioned account that never signed in (see `EraseDataSubject`) — never the raw email/name. This audit record contains NO OTHER PII. */
+  subjectId: z.string(),
   timestamp: z.string(),
   counts: z.object({
     chatThreads: z.number().int().nonnegative(),
@@ -161,28 +161,28 @@ export const GdprErasureAuditRecordSchema = z.object({
 });
 export type GdprErasureAuditRecord = z.infer<typeof GdprErasureAuditRecordSchema>;
 
-/** Deletes every `HistoryContainer` document of `type` owned by `subjectHashedId` (the container's partition key). */
+/** Deletes every `HistoryContainer` document of `type` owned by `subjectId` (the container's partition key). */
 const eraseHistoryDocsByType = async (
   type: string,
-  subjectHashedId: string
+  subjectId: string
 ): Promise<number> => {
   const container = HistoryContainer();
   const querySpec: SqlQuerySpec = {
     query: "SELECT c.id FROM root c WHERE c.type=@type AND c.userId=@userId",
     parameters: [
       { name: "@type", value: type },
-      { name: "@userId", value: subjectHashedId },
+      { name: "@userId", value: subjectId },
     ],
   };
 
   const { resources } = await container.items
-    .query<{ id: string }>(querySpec, { partitionKey: subjectHashedId })
+    .query<{ id: string }>(querySpec, { partitionKey: subjectId })
     .fetchAll();
 
   let deleted = 0;
   for (const { id } of resources) {
     try {
-      await container.item(id, subjectHashedId).delete();
+      await container.item(id, subjectId).delete();
       deleted++;
     } catch (error) {
       const code = (error as { code?: number })?.code;
@@ -193,35 +193,35 @@ const eraseHistoryDocsByType = async (
   return deleted;
 };
 
-/** Returns the ids of every `CHAT_THREAD` document owned by `subjectHashedId` — used to resolve blob paths (keyed by threadId, not userId). */
-const findThreadIdsForSubject = async (subjectHashedId: string): Promise<string[]> => {
+/** Returns the ids of every `CHAT_THREAD` document owned by `subjectId` — used to resolve blob paths (keyed by threadId, not userId). */
+const findThreadIdsForSubject = async (subjectId: string): Promise<string[]> => {
   const querySpec: SqlQuerySpec = {
     query: "SELECT c.id FROM root c WHERE c.type=@type AND c.userId=@userId",
     parameters: [
       { name: "@type", value: CHAT_THREAD_ATTRIBUTE },
-      { name: "@userId", value: subjectHashedId },
+      { name: "@userId", value: subjectId },
     ],
   };
   const { resources } = await HistoryContainer()
-    .items.query<{ id: string }>(querySpec, { partitionKey: subjectHashedId })
+    .items.query<{ id: string }>(querySpec, { partitionKey: subjectId })
     .fetchAll();
   return resources.map((r) => r.id);
 };
 
-/** Deletes every `ConfigContainer` document of `type`, in `tenantSlug`, whose `ownerFieldName` matches `subjectHashedId`. Both tenantSlug AND the owner field are required — never drop either. */
+/** Deletes every `ConfigContainer` document of `type`, in `tenantSlug`, whose `ownerFieldName` matches `subjectId`. Both tenantSlug AND the owner field are required — never drop either. */
 const eraseConfigDocsByOwnerField = async (
   type: string,
   tenantSlug: string,
-  ownerFieldName: "ownerHashedId" | "actorHashedId",
-  subjectHashedId: string
+  ownerFieldName: "ownerId" | "actorId",
+  subjectId: string
 ): Promise<number> => {
   const container = ConfigContainer();
   const querySpec: SqlQuerySpec = {
-    query: `SELECT c.id FROM root c WHERE c.type=@type AND c.tenantSlug=@tenantSlug AND c.${ownerFieldName}=@subjectHashedId`,
+    query: `SELECT c.id FROM root c WHERE c.type=@type AND c.tenantSlug=@tenantSlug AND c.${ownerFieldName}=@subjectId`,
     parameters: [
       { name: "@type", value: type },
       { name: "@tenantSlug", value: tenantSlug },
-      { name: "@subjectHashedId", value: subjectHashedId },
+      { name: "@subjectId", value: subjectId },
     ],
   };
 
@@ -258,14 +258,14 @@ const eraseBlobsForThreads = async (threadIds: string[]): Promise<number> => {
 };
 
 /** Deletes every AI Search index document tagged with the subject's hashed id. */
-const eraseSearchIndexDocuments = async (subjectHashedId: string): Promise<number> => {
-  const results = await DeleteDocumentsByUser(subjectHashedId);
+const eraseSearchIndexDocuments = async (subjectId: string): Promise<number> => {
+  const results = await DeleteDocumentsByUser(subjectId);
   return results.filter((r) => r.status === "OK").length;
 };
 
 /**
  * SAD §32.3 `anonymizeUser` — strips PII from the `UserAccount` document
- * but keeps it (and its `id`/`hashedId`, needed for the doc's own Cosmos
+ * but keeps it (and its `id`/`canonicalUserId`, needed for the doc's own Cosmos
  * identity and for admin-side lookups) for audit purposes, rather than
  * hard-deleting it. `status: "disabled"` is set as defense-in-depth,
  * though see docs/known-limitations.md: this app does not currently
@@ -280,10 +280,15 @@ const anonymizeUserAccount = async (
   tenantSlug: string,
   subject: UserAccount
 ): Promise<"anonymized" | "error"> => {
+  // `canonicalUserId` is nullable (never-logged-in invitee, see
+  // `EraseDataSubject`'s doc comment) — `subject.id` (the Cosmos doc id,
+  // always non-null) is used as the anonymized-email disambiguator instead
+  // whenever there is no canonical id to slice.
+  const anonymizerSuffix = (subject.canonicalUserId ?? subject.id).slice(0, 16);
   const anonymized: UserAccount = {
     ...subject,
     displayName: "Erased user",
-    email: `erased-${subject.hashedId.slice(0, 16)}@erased.invalid`,
+    email: `erased-${anonymizerSuffix}@erased.invalid`,
     tags: {},
     lastLoginAt: null,
     status: "disabled",
@@ -306,8 +311,8 @@ const anonymizeUserAccount = async (
 
 const writeAuditRecord = async (
   tenantSlug: string,
-  performedByHashedId: string,
-  subjectHashedId: string,
+  performedById: string,
+  subjectId: string,
   counts: ErasureCounts
 ): Promise<ServerActionResponse<GdprErasureAuditRecord>> => {
   const record: GdprErasureAuditRecord = {
@@ -315,8 +320,8 @@ const writeAuditRecord = async (
     type: GDPR_ERASURE_AUDIT_ATTRIBUTE,
     userId: tenantSlug,
     tenantSlug,
-    performedByHashedId,
-    subjectHashedId,
+    performedById,
+    subjectId,
     timestamp: new Date().toISOString(),
     counts,
   };
@@ -341,71 +346,92 @@ const writeAuditRecord = async (
 
 /**
  * Erases every store's data for a single data subject, scoped to
- * `tenantSlug` AND the subject's own hashed id — see module doc above for
- * the full store inventory. `subjectUserId` is the `UserAccount` document
- * id (same identifier the `/admin/users/[id]` page and its server actions
- * already use — see `user-service.ts`'s `userAccountDocId`), NOT the raw
- * email or hashed id directly, so the caller never has to compute the hash
- * itself; this function resolves the subject's `hashedId` from the
- * `UserAccount` doc, which is ALSO how it guarantees tenant scoping —
- * `FindUserById` is itself tenant-partition-scoped and re-checks
- * `tenantSlug` on the resource, so an id belonging to another tenant (or a
- * nonexistent one) returns `NOT_FOUND` before anything is deleted.
+ * `tenantSlug` AND the subject's own canonical id (ADR-003) — see module
+ * doc above for the full store inventory. `subjectUserId` is the
+ * `UserAccount` document id (same identifier the `/admin/users/[id]` page
+ * and its server actions already use — see `user-service.ts`'s
+ * `userAccountDocId`), NOT the raw email or canonical id directly, so the
+ * caller never has to compute/know it itself; this function resolves the
+ * subject's `canonicalUserId` from the `UserAccount` doc, which is ALSO how
+ * it guarantees tenant scoping — `FindUserById` is itself
+ * tenant-partition-scoped and re-checks `tenantSlug` on the resource, so an
+ * id belonging to another tenant (or a nonexistent one) returns `NOT_FOUND`
+ * before anything is deleted.
+ *
+ * `canonicalUserId` is nullable (`user-service.ts`'s `CreateUser` "invite by
+ * email" flow — ADR-003: an admin-pre-provisioned account has no real oid
+ * until its first login). Such a subject cannot own any per-user document
+ * anywhere in this app (every erasable store is keyed by a non-null
+ * canonicalUserId), so per-store erasure is skipped entirely (all counts
+ * `0`) and only the directory doc itself is anonymized — still a complete,
+ * correct erasure for that subject.
  */
 export const EraseDataSubject = async (params: {
   tenantSlug: string;
   subjectUserId: string;
-  performedByHashedId: string;
+  performedById: string;
 }): Promise<ServerActionResponse<GdprErasureAuditRecord>> => {
-  const { tenantSlug, subjectUserId, performedByHashedId } = params;
+  const { tenantSlug, subjectUserId, performedById } = params;
 
   const subjectResponse = await FindUserById(tenantSlug, subjectUserId);
   if (subjectResponse.status !== "OK") {
     return subjectResponse;
   }
   const subject = subjectResponse.response;
-  const subjectHashedId = subject.hashedId;
+  const subjectId = subject.canonicalUserId;
 
-  const threadIds = await findThreadIdsForSubject(subjectHashedId);
+  let chatThreads = 0;
+  let chatMessages = 0;
+  let chatDocuments = 0;
+  let chatCitations = 0;
+  let customerEntities = 0;
+  let meetingBriefs = 0;
+  let activityEvents = 0;
+  let searchIndexDocuments = 0;
+  let blobs = 0;
 
-  const [
-    chatThreads,
-    chatMessages,
-    chatDocuments,
-    chatCitations,
-    customerEntities,
-    meetingBriefs,
-    activityEvents,
-    searchIndexDocuments,
-    blobs,
-    userAccount,
-  ] = await Promise.all([
-    eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatThreads, subjectHashedId),
-    eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatMessages, subjectHashedId),
-    eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatDocuments, subjectHashedId),
-    eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatCitations, subjectHashedId),
-    eraseConfigDocsByOwnerField(
-      ERASABLE_DOCUMENT_TYPES.customerEntities,
-      tenantSlug,
-      "ownerHashedId",
-      subjectHashedId
-    ),
-    eraseConfigDocsByOwnerField(
-      ERASABLE_DOCUMENT_TYPES.meetingBriefs,
-      tenantSlug,
-      "ownerHashedId",
-      subjectHashedId
-    ),
-    eraseConfigDocsByOwnerField(
-      ERASABLE_DOCUMENT_TYPES.activityEvents,
-      tenantSlug,
-      "actorHashedId",
-      subjectHashedId
-    ),
-    eraseSearchIndexDocuments(subjectHashedId),
-    eraseBlobsForThreads(threadIds),
-    anonymizeUserAccount(tenantSlug, subject),
-  ]);
+  if (subjectId !== null) {
+    const threadIds = await findThreadIdsForSubject(subjectId);
+
+    [
+      chatThreads,
+      chatMessages,
+      chatDocuments,
+      chatCitations,
+      customerEntities,
+      meetingBriefs,
+      activityEvents,
+      searchIndexDocuments,
+      blobs,
+    ] = await Promise.all([
+      eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatThreads, subjectId),
+      eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatMessages, subjectId),
+      eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatDocuments, subjectId),
+      eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.chatCitations, subjectId),
+      eraseConfigDocsByOwnerField(
+        ERASABLE_DOCUMENT_TYPES.customerEntities,
+        tenantSlug,
+        "ownerId",
+        subjectId
+      ),
+      eraseConfigDocsByOwnerField(
+        ERASABLE_DOCUMENT_TYPES.meetingBriefs,
+        tenantSlug,
+        "ownerId",
+        subjectId
+      ),
+      eraseConfigDocsByOwnerField(
+        ERASABLE_DOCUMENT_TYPES.activityEvents,
+        tenantSlug,
+        "actorId",
+        subjectId
+      ),
+      eraseSearchIndexDocuments(subjectId),
+      eraseBlobsForThreads(threadIds),
+    ]);
+  }
+
+  const userAccount = await anonymizeUserAccount(tenantSlug, subject);
 
   const counts: ErasureCounts = {
     chatThreads,
@@ -420,5 +446,11 @@ export const EraseDataSubject = async (params: {
     userAccount,
   };
 
-  return writeAuditRecord(tenantSlug, performedByHashedId, subjectHashedId, counts);
+  // Audit `subjectId` — a never-logged-in invitee (`null`) is recorded as
+  // the literal string "never-logged-in" rather than `null`/empty, so the
+  // audit trail (`GdprErasureAuditRecordSchema.subjectId: z.string()`,
+  // deliberately non-nullable — the audit log itself must always have a
+  // meaningful, non-empty value) unambiguously distinguishes "this subject
+  // never had a canonical id to begin with" from a lookup bug.
+  return writeAuditRecord(tenantSlug, performedById, subjectId ?? "never-logged-in", counts);
 };

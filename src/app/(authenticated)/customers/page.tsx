@@ -12,8 +12,8 @@ export const dynamic = "force-dynamic";
  * editable here (see `/customers/[id]`).
  */
 export default async function CustomersPage() {
-  const { tenantSlug, ownerHashedId } = await getSalesCoachActorContext();
-  const result = await FindCustomerEntitiesForOwner(tenantSlug, ownerHashedId);
+  const { tenantSlug, ownerId } = await getSalesCoachActorContext();
+  const result = await FindCustomerEntitiesForOwner(tenantSlug, ownerId);
 
   if (result.status !== "OK") {
     return <DisplayError errors={result.errors} />;
