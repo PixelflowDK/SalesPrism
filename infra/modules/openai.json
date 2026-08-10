@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "2745354425603094309"
+      "templateHash": "16020352117861956285"
     }
   },
   "parameters": {
@@ -101,7 +101,8 @@
       },
       "properties": {
         "publicNetworkAccess": "Disabled",
-        "customSubDomainName": "[variables('accountName')]"
+        "customSubDomainName": "[variables('accountName')]",
+        "disableLocalAuth": true
       }
     },
     {

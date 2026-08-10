@@ -28,6 +28,13 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview
     ]
     publicNetworkAccess: 'Disabled'
     disableKeyBasedMetadataWriteAccess: true
+    disableLocalAuth: true
+    // Pinned explicitly (SR-002): this module's properties object is a full
+    // PUT for Microsoft.DocumentDB/databaseAccounts — any property this
+    // template omits is reset to the RP default on every deployment, not
+    // left as-is. Without this, adding disableLocalAuth here would silently
+    // flip the live enableAutomaticFailover (currently true) to false.
+    enableAutomaticFailover: true
   }
 }
 

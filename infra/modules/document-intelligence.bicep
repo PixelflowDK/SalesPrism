@@ -17,6 +17,7 @@ resource docIntelligence 'Microsoft.CognitiveServices/accounts@2023-10-01-previe
   properties: {
     publicNetworkAccess: 'Disabled'
     customSubDomainName: accountName
+    disableLocalAuth: true
   }
 }
 

@@ -66,6 +66,7 @@ resource openAiAccount 'Microsoft.CognitiveServices/accounts@2024-04-01-preview'
   properties: {
     publicNetworkAccess: 'Disabled'
     customSubDomainName: accountName
+    disableLocalAuth: true
   }
 }
 
