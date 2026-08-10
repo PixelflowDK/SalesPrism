@@ -187,3 +187,9 @@ All other `process.env.*` references across `app/` and `features/` were grepped 
   - **SKIPPED (pre-existing, unrelated to this deploy):** the 4 `authenticated-journeys.spec.ts` tests — these are `test.skip(...)`'d in source because they require a real interactive Entra ID session (see the file's own docstring and `playwright.config.ts`'s comment); not something a redeploy changes.
 
 **Cleanup:** `git worktree remove /tmp/salesprism-deploy2 --force` — removed cleanly; main working tree (with the in-progress, uncommitted SR-004 changes) was never touched.
+
+## 2026-08-10 — ADR-003 identity migration: val1 app settings
+- `ADMIN_OBJECT_IDS=7d37f13b-d198-4421-81c6-f0f9076049c7` **set** on app-azurechat-val1.
+- `ADMIN_EMAIL_ADDRESS` **removed** — the code no longer reads it; leaving it would be a misleading artifact suggesting an authorization path that no longer exists.
+- Ordering note: the setting was applied BEFORE the new build is deployed, so there is no window in which the running app has zero admins. The currently-deployed build predates ADR-003 and ignores the new variable harmlessly.
+- Verified: `az webapp config appsettings list` shows ADMIN_OBJECT_IDS present and no ADMIN_* email variable.

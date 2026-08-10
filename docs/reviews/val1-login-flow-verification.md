@@ -49,7 +49,8 @@ invalidate the test by skipping the credential exchange entirely).
 | B3 | Complete sign-in with a tenant account | Redirect back to `/api/auth/callback/azure-ad`, then into the app | ☐ | screenshot |
 | B4 | Session created | Authenticated chat UI renders; no redirect back to login | ☐ | screenshot |
 | B5 | Authenticated page access | `/customers` and `/briefs` load (not 302 to login, not 500) | ☐ | screenshot |
-| B6 | Admin gate | If signed in as `ADMIN_EMAIL_ADDRESS`, `/admin` loads; otherwise `/admin` → `/unauthorized` | ☐ | screenshot |
+| B6 | Admin gate | Authorization is now by **Entra `oid`**, not email (ADR-003). `ADMIN_OBJECT_IDS=7d37f13b-d198-4421-81c6-f0f9076049c7` is set on val1 and `ADMIN_EMAIL_ADDRESS` has been removed. Signed in as that account, `/admin` loads; any other identity → `/unauthorized` | ☐ | screenshot |
+| B6b | Ownership stability (ADR-003) | After B8's re-login, previously created data is still visible — proves ownership follows `oid`, not a mutable claim | ☐ | screenshot |
 | B7 | Logout | Session cleared; protected routes redirect to login again | ☐ | screenshot |
 | B8 | Re-login | Sign in a second time succeeds (proves the flow is repeatable, not a one-off cached grant) | ☐ | screenshot |
 
