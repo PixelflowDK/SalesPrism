@@ -104,7 +104,16 @@ export const hashValue = (value: string): string => {
 export const redirectIfAuthenticated = async () => {
   const user = await userSession();
   if (user) {
-    RedirectToPage("chat");
+    // MUST be awaited. `RedirectToPage` is async (Next.js 15 requires every
+    // export of a "use server" module to be async) and Next's `redirect()`
+    // works by THROWING `NEXT_REDIRECT`. Un-awaited, that throw lands in a
+    // floating promise, is swallowed as an unhandled rejection, and this
+    // function returns normally — so `app/page.tsx` carries on and renders the
+    // login page to a user who is already signed in. That was the val1 defect:
+    // Entra authentication succeeded, the session cookie was set, and the user
+    // was still shown the login screen. Never call a redirect helper without
+    // awaiting it.
+    await RedirectToPage("chat");
   }
 };
 
