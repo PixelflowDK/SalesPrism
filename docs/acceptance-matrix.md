@@ -1,6 +1,6 @@
 # Sales Prism — Canonical Acceptance Matrix
 
-**Generated:** 2026-08-11 · **Commit:** `7c3432c` · **Deployed & verified live:** `7c3432c`
+**Generated:** 2026-08-11 · **Commit:** `c6505b0` · **Deployed & verified live:** `c6505b0`
 **Environment:** validation (`val1`) — https://val1-sales360.pixelflow.dk
 **Scope:** SAD v2.7 Phases A–F, Feature Backlog V1 (F-01..F-04). Phases G–H and V2/V3 excluded.
 
@@ -50,7 +50,7 @@ an external action) · **OPEN** (known gap).
 
 | Phase | Requirement | Artifact | Live evidence | Status |
 |---|---|---|---|---|
-| A | Fork + Next 15 / AI SDK v6 baseline | repo, `package.json` | Builds clean; 264 tests | PASS |
+| A | Fork + Next 15 / AI SDK v6 baseline | repo, `package.json` | Builds clean; 272 tests | PASS |
 | A | First environment deployed, EU-only, DataZoneStandard | `infra/main.bicep` + modules | val1 live, principles A1–A3 above | PASS |
 | A | Domain | — | `sales-prism.com` was never registered; platform runs on `pixelflow.dk`. SAD text corrected. | PASS (re-baselined) |
 | B | Parameterised Bicep (VNet, PE, DNS zones, tier, SKU) | `infra/modules/*` | Deployed val1 end-to-end | PASS |
@@ -62,7 +62,7 @@ an external action) · **OPEN** (known gap).
 | C | ChatAPIEntry → AI SDK `streamText`/`tool()`/`onFinish` | `src/app/(authenticated)/api/chat/` | Compiles, unit-tested. Streaming not observed against live Azure OpenAI. | UNPROVEN |
 | D | Admin portal + user administration | `/admin`, `src/features/admin/*` | Route exists and 307s unauthenticated; admin authorization re-checked inside every action | UNPROVEN |
 | D | Analytics + CSV export | `activity-service.ts` | CSV formula injection fixed and unit-tested | PASS (unit) |
-| D | **On-request data export per customer (SAD §, "knap per kunde")** | — | Only an aggregate admin analytics CSV exists. It does not cover chat, documents, customer entities or briefs. | **OPEN** |
+| D | On-request data export per customer (SAD §, "knap per kunde") | `gdpr-export-service.ts`, `/api/admin/users/[userId]/gdpr-export`, admin user page | Route deployed; returns 307 to login when unauthenticated. Store coverage is derived from the erasure registry and enforced by BOTH the type checker and a test. | PASS (unit) |
 | E | F-01 Meeting preparation workflow | `/prepare`, `prepare-form.tsx` | Route live, 307s unauthenticated | UNPROVEN |
 | E | F-02 Real-time conversation coaching | `/coach`, `coach-form.tsx` | Route live, 307s unauthenticated | UNPROVEN |
 | E | F-03 Customer intelligence / persistent memory | `customer-entity-service.ts`, `/customers` | Owner-scoped queries unit-tested; evidence-gated extraction | PASS (unit) |
@@ -126,14 +126,18 @@ together by `access-control.spec.ts`.
 | Article | Requirement | Status |
 |---|---|---|
 | Art. 5(1)(e) | Retention limits | PASS for chat (90d) and activity (30d). `PERSONA`/`EXTENSION` are swept by the chat TTL by accident rather than design — recorded in `cosmos-retention.ts`, not yet decided. |
-| Art. 15 | Right of access | **OPEN** — no data-subject export path exists. |
+| Art. 15 | Right of access | PASS (unit) — admin-triggered JSON export covering every store the erasure path covers, with stores that cannot be JSON-serialised named in the payload with reasons. Not yet exercised against a real signed-in admin. |
 | Art. 17 | Right to erasure | PASS — every Cosmos type, AI Search index documents and image blobs. Coverage is now enforced by a self-discovering test rather than a hand-maintained list. |
-| Art. 20 | Portability | **OPEN** — same gap as Art. 15. The admin analytics CSV must not be represented as satisfying this. |
+| Art. 20 | Portability | PASS (unit) — same export, machine-readable JSON. The aggregate admin analytics CSV is still NOT this and must not be described as such. |
 | Residency | EU-only | PASS |
 | Telemetry minimisation | No PII in logs | PASS after SR-012 for the auth path. A migration of the legacy RAG/document call sites off raw `console.*` is in progress. |
 
-**DPIA cannot be signed off today.** The blocker is Art. 15/20: there is no export path.
-Erasure, residency and retention would survive review; portability would not.
+**DPIA blocker cleared, with one caveat.** Art. 15/20 now has a real implementation, so
+erasure, access, portability, residency and retention would all survive review on the
+evidence. The caveat is that the export has never been run by a signed-in admin against
+live data — like most of Phase D, it is proven by test and by deployment, not by use. A
+reviewer who accepts unit-level evidence can sign; one who requires a demonstrated
+subject-access request cannot, until the authenticated matrix is unblocked.
 
 Third-party contacts named inside customer entities (a customer's employee, not the
 Sales Prism user) have no independent access or erasure route — erasure is scoped by the
@@ -162,7 +166,7 @@ travels inside the artifact and cannot disagree with the code being served.
 
 | Layer | Count | Status |
 |---|---|---|
-| Unit (vitest) | 264 across 29 files | PASS |
+| Unit (vitest) | 272 across 30 files | PASS |
 | Typecheck | `tsc --noEmit` strict | PASS |
 | Lint | `next lint` | PASS — no warnings |
 | E2E unauthenticated | `access-control`, `auth-providers`, `auth-signin-click`, `pwa` | PASS — sign-in click path reaches Entra in all three service-worker states |
@@ -188,7 +192,9 @@ check that cannot fail is worse than no check:
 2. **Authenticated data-plane matrix (10 items).** Requires one human interactive login
    to produce `E2E_STORAGE_STATE`. Everything downstream of it is written and waiting.
    This is why so much of §2 reads UNPROVEN rather than PASS.
-3. **Art. 15/20 export.** No code exists. Blocks DPIA sign-off.
+3. **Erasure has no UI.** The DELETE route works and is tested; there is no button. An
+   irreversible cross-store delete needs a confirmation flow, which is a deliberate
+   follow-up rather than an oversight.
 4. **End-to-end provisioning of a second customer.** The workflow has never been run
    start to finish. Its Phase B exit criterion is therefore unmet.
 5. **H-3 enforcement flip.** Audit-only today by choice.

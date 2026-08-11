@@ -1,11 +1,11 @@
 {
-  "phase": "Stage 7 \u2014 review gauntlet running; all production blockers closed except SR-008 (operator-only)",
-  "lastCompletedTask": "Review gauntlet closed: SR-011/012/013 fixed+deployed; logging migration; acceptance matrix; SR-008 runbook; H-3 assigned (audit-only)",
+  "phase": "Stage 8 \u2014 all engineering work complete; remaining items need an operator or a human login",
+  "lastCompletedTask": "GDPR Art.15/20 export built, tested, deployed and verified; acceptance matrix updated",
   "branch": "develop",
-  "lastStableCommit": "749acba",
-  "deployedRevision": "749acba \u2014 verified live via /api/health, gate passed on first poll",
-  "testCount": 264,
-  "updatedAt": "2026-08-11T18:12",
+  "lastStableCommit": "c6505b0",
+  "deployedRevision": "c6505b0 \u2014 verified live via /api/health, gate passed on first poll",
+  "testCount": 272,
+  "updatedAt": "2026-08-11T22:00",
   "leadModel": "Opus 5",
   "handoffDoc": "docs/session-handoff-current.md",
   "OUTAGE_RESOLVED": "val1 authentication is UP. SR-001 closed via in-app DefaultAzureCredential retrieval from Key Vault (instrumentation-auth-secrets.node.ts). KEY FINDING: App Service Key Vault *references* can NEVER work against a private-endpoint-only vault \u2014 the platform control plane does not traverse VNet integration. Do not retry that approach.",
@@ -26,14 +26,15 @@
     "H-5",
     "C-1",
     "CR2-1/2/4/5",
-    "task#30 (provisioning gates)"
+    "task#30 (provisioning gates)",
+    "Art. 15/20 data-subject export"
   ],
   "openBlockers": [
     "SR-008 break-glass accounts \u2014 OPERATOR ONLY (account creation + password escrow are not automatable). Runbook + acceptance test: docs/runbooks/SR-008-break-glass-accounts.md",
     "Authenticated data-plane matrix (10 items) \u2014 BLOCKED on a human interactive Entra login to produce E2E_STORAGE_STATE",
     "H-3 enforcement flip \u2014 definitions deployed and assigned at subscription scope with --enforcement-mode DoNotEnforce (audit only, denies nothing). Flipping to Default is an operator call.",
-    "Art. 15/20 data-subject export \u2014 no export path exists (admin CSV is aggregate analytics only, must NOT be represented as satisfying Art. 15/20)",
-    "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large"
+    "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large",
+    "Erasure has no UI \u2014 DELETE route works and is tested, but an irreversible cross-store delete needs a confirmation flow (deliberate follow-up)"
   ],
   "SR_008_TENANT_FACTS": "Tenant d4b1b55b-6c92-4419-9a08-956e975dce86 has exactly ONE user, and it is an EXTERNAL-sourced (#EXT#) identity that is also the ONLY Global Administrator: admin_insightcast.dk#EXT#@admininsightcast.onmicrosoft.com, oid 7d37f13b-d198-4421-81c6-f0f9076049c7. Zero cloud-only accounts, zero Conditional Access policies. Break-glass accounts MUST exist before the first CA policy is created.",
   "verifiedLive2026_08_11": [
@@ -44,6 +45,6 @@
     "264 unit tests, tsc clean, lint clean"
   ],
   "CORRECTIONS_STANDING": "COMMITTED != DEPLOYED != VERIFIED. Verify from a cache-cleared context and against the RUNNING instance (/api/health), never against git state or a cached response. Earlier claims that canonical identity / isAdmin / /admin access were PROVEN remain WITHDRAWN \u2014 they read a stale service-worker cache.",
-  "nextAction": "Stage 8 delivery docs. Genuinely blocked: SR-008 (operator), authenticated E2E matrix (human login), Art.15/20 export (unbuilt), end-to-end provisioning run.",
+  "nextAction": "Nothing further can be closed without: an operator (SR-008 break-glass, H-3 enforcement flip), a human interactive login (authenticated E2E matrix), an Azure quota grant, or a decision to run provision-customer.yml end-to-end for a second slug.",
   "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)"
 }
