@@ -353,4 +353,211 @@ All other `process.env.*` references across `app/` and `features/` were grepped 
 
 **Cleanup:** `git worktree remove /tmp/salesprism-deploy5 --force` — removed cleanly; main working tree untouched. No git commit/push performed (per instruction — Kristjan commits).
 
+---
+
+## 2026-08-11 — SR-006 closed: dead `enableZeroDataRetention` parameter removed (no deployment)
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Finding (re-verified before acting):** `infra/main.bicep:42` declared `param enableZeroDataRetention bool = false`, matching SAD §6.5's "Bicep-parameter klar fra dag 1" framing almost verbatim, but the parameter was never passed into `openAiModule`'s params block, and `modules/openai.bicep` had (and has) no parameter or resource property connected to it. Confirmed via `grep -n "enableZeroDataRetention\|raiMonitor\|abuse" infra/main.bicep infra/modules/openai.bicep` before editing — only the dead declaration and its two `.bicepparam` echoes existed. This matches the prior finding already recorded in `docs/gdpr-erasure-evidence.md` §6 and `docs/known-limitations.md`.
+
+**Decision: (b) — remove, do not wire.** Azure OpenAI Zero Data Retention has no ARM/Bicep-settable property in `Microsoft.CognitiveServices/accounts@2024-04-01-preview` (the API version `modules/openai.bicep` uses) or any other version checked. ZDR is an account-level grant Microsoft applies out-of-band after a Limited Access Program application (SAD's own stated 1-4 week timeline). There is nothing in this subscription to wire the parameter to — inventing a resource property to "make the parameter do something" would itself be a fabricated control. Option (a) was therefore not available.
+
+**Changes made:**
+- `infra/main.bicep` — removed `param enableZeroDataRetention bool = false`; replaced with a dated comment block explaining why and what must be true before any ZDR-related parameter is re-added.
+- `infra/environments/example.bicepparam`, `infra/environments/validation.bicepparam` — removed the corresponding `param enableZeroDataRetention = false` lines.
+- `infra/main.json` — regenerated via `az bicep build --file infra/main.bicep` (twin now in sync; diff is exclusively the removed parameter/its downstream schema entries — confirmed no other change).
+- `docs/Sales_Prism_SAD_v2.7.md` — §6.5 rewritten (no Bicep parameter exists; describes the real Limited Access Program mechanism); §16.3 corrected to cross-reference §6.5 instead of asserting the add-on is ready; decisions-log rows (`ZDR-strategi`, `Bicep linter warnings`) corrected to stop describing `enableZeroDataRetention` as a deliberate contract parameter.
+- `docs/known-limitations.md` — SR-006 entry marked **RESOLVED**, with the still-open real risk (Microsoft's 30-day default abuse-monitoring retention on every `oai-azurechat-{slug}` account) split into its own tracked limitation so it doesn't disappear alongside the closed code defect.
+- `docs/gdpr-erasure-evidence.md` — addendum appended after the original §6 finding (historical evidence text left unmodified) pointing to this closure and reiterating that the underlying 30-day retention exposure is unchanged.
+
+**Verification — build only, no deployment:**
+- `az bicep build --file infra/main.bicep` — clean (only pre-existing, previously-documented linter false positives: `no-unused-params` on `companyName`, `no-unnecessary-dependson` ×many, `no-hardcoded-env-urls` in `private-dns-zones.bicep`). No new warnings or errors introduced.
+- `az bicep build-params --file infra/environments/validation.bicepparam` — compiles cleanly against the updated `main.bicep` (same pre-existing warning set only).
+- `grep -rn "enableZeroDataRetention" infra/` — zero remaining references anywhere in `infra/` after the edit (was 3: `main.bicep`, `example.bicepparam`, `validation.bicepparam`).
+
+**Why no Azure deployment was performed for this blocker:** the parameter never controlled any live resource property (confirmed above), so there is no live-state before/after to diff — removing dead Bicep source code has no effect on `rg-azurechat-val1`'s deployed resources. `oai-azurechat-val1`'s live `raiMonitorConfig` remains `null` (Microsoft default abuse-monitoring), exactly as before this change, and exactly as `docs/gdpr-erasure-evidence.md` already documented. Confirmed unaffected via source-trace only; re-querying `az cognitiveservices account show` would return identical output to the 2026-07-31 evidence capture since nothing was deployed.
+
+**Scope discipline:** touched only `infra/main.bicep`, `infra/main.json`, `infra/environments/example.bicepparam`, `infra/environments/validation.bicepparam`, plus `docs/`. Did not touch `infra/modules/key-vault.bicep` or any observability/alerts module (reserved for the parallel Key Vault/telemetry agent). No git commit/push performed — lead commits.
+
+**Result: CLOSED.** The dead parameter is gone, the SAD no longer oversells ZDR as ready, and the real gap (no code path exists yet because no approval has ever been pursued) is now stated plainly in three places (`known-limitations.md`, `gdpr-erasure-evidence.md`, SAD §6.5) instead of implied-as-solved in one. **Remains for the operator:** if/when a customer wants the ZDR add-on, submit the Microsoft Limited Access Program application for that customer's `oai-azurechat-{slug}` account; only once approved should any ZDR-related Bicep/code be added, informed by whatever Microsoft's approval actually changes (verify via `az cognitiveservices account show` post-approval — do not assume a property exists before seeing one).
+
+---
+
+## 2026-08-11 — SR-007 closed: Cosmos DB Continuous Backup migration + blob soft delete enabled (live deployment, val1)
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+### Part A — Cosmos DB backup policy (Periodic → Continuous30Days)
+
+**Live state inspected first:** `az cosmosdb show --name cosmos-azurechat-val1 --resource-group rg-azurechat-val1` confirmed `backupPolicy.type: "Periodic"`, `backupIntervalInMinutes: 240`, `backupRetentionIntervalInHours: 8` — matching the prior finding in `docs/known-limitations.md` exactly. `disableLocalAuth: true`, `publicNetworkAccess: "Disabled"`, `enableAutomaticFailover: true`, one approved private endpoint (`pe-cosmos-val1`), `CanNotDelete` lock present — all captured to `/private/tmp/.../scratchpad/cosmos-before.json` as the before-snapshot.
+
+**Bicep change:** added `enableContinuousBackup bool = true` to `infra/main.bicep` and `infra/modules/cosmos-db.bicep`, wired to a new `backupPolicy` variable set explicitly on `cosmosAccount.properties.backupPolicy` (Continuous30Days when true, the prior Periodic 240min/8h/Geo shape when false — preserving the exact prior default for any account that must stay off Continuous). `az bicep build` on both files — clean (module: zero warnings; `main.bicep`: only the pre-existing, previously-documented `no-unused-params`/`no-unnecessary-dependson`/`no-hardcoded-env-urls` warnings, no new ones). `infra/main.json` and `infra/modules/cosmos-db.json` twins regenerated.
+
+**What-if before touching anything live:**
+- Full-stack `az deployment sub what-if` (main.bicep + validation.bicepparam) surfaced significant **unrelated** pending drift not part of this task — 3 resources to create (`speech-azurechat-val1` + its private endpoint + DNS zone group, i.e. the F-02 Speech feature not yet deployed to val1), plus modifications to Key Vault (`publicNetworkAccess` casing), Application Insights, AI Search `networkRuleSet`, App Service Plan, and App Service `siteConfig` — none of which this task authorized touching (Key Vault and observability/alerts are explicitly reserved for a parallel agent per this task's own instructions). **Decision: did not deploy the full stack.** Scoped a `az deployment group what-if` to `modules/cosmos-db.bicep` alone instead, which confirmed the Cosmos DB account change is a clean in-place `~ Modify` (`properties.backupPolicy.type: "Periodic" => "Continuous"`, `+ properties.backupPolicy.continuousModeProperties.tier: "Continuous30Days"`) — not a delete/recreate. The same scoped what-if also surfaced a pre-existing (not caused by this change — same diff appears in the full-stack what-if against the unmodified container resource definitions) apparent "removal" of `indexingPolicy`/`conflictResolutionPolicy` on the two Cosmos containers, which is a well-documented Cosmos SQL-container what-if false-positive (RP-assigned defaults reported as diffs against a template that never specified them). To eliminate any risk around that question entirely, the actual migration was performed as a narrow `az cosmosdb update` account-level operation (below), which never touches containers.
+
+**Migration executed:** `az cosmosdb update --name cosmos-azurechat-val1 --resource-group rg-azurechat-val1 --backup-policy-type Continuous --continuous-tier Continuous30Days` — Azure's own documented self-service Periodic→Continuous migration path. Ran as a background task (exceeded the 120s foreground timeout, as expected for this operation); completed with exit code 0.
+
+**Post-state diff (before vs. after, full `az cosmosdb show` JSON, programmatic key-by-key comparison):**
+```
+disableLocalAuth                        SAME
+publicNetworkAccess                     SAME
+enableAutomaticFailover                 SAME
+disableKeyBasedMetadataWriteAccess      SAME
+isVirtualNetworkFilterEnabled           SAME
+tags                                    SAME
+location                                SAME
+locations                               SAME
+privateEndpointConnections              SAME
+```
+Only change: `backupPolicy.type: "Periodic" → "Continuous"`, `+ continuousModeProperties.tier: "Continuous30Days"`, periodic-mode fields removed (expected — mutually exclusive), and `createMode: null → "Default"` (cosmetic — RP now reporting its always-implicit default explicitly). `CanNotDelete` lock on the account reconfirmed present post-migration via `az resource lock list`.
+
+**This migration is one-way** — Azure does not support moving a Continuous-backup account back to Periodic. Documented as such in `modules/cosmos-db.bicep`'s header comment, SAD §22.1, and `docs/known-limitations.md`.
+
+### Part B — Blob soft delete (disabled → 7-day retention)
+
+**Live state inspected first:** `az storage account blob-service-properties show --account-name stval136sepgklp44gk --resource-group rg-azurechat-val1` confirmed `deleteRetentionPolicy.enabled: false`, `containerDeleteRetentionPolicy: null`, `isVersioningEnabled: null`, `changeFeed: null`. Separately confirmed the commit-`d6fe070` blob lifecycle policy (`delete-images-after-90-days`) — previously flagged in `known-limitations.md` as "not yet deployed" — is now actually live (`az storage account management-policy show` returned the policy, `lastModifiedTime: 2026-08-10T14:39:02Z`, matching committed source exactly; deployed by someone/something between 2026-07-31 and this check, outside this session). No action needed for the lifecycle policy itself.
+
+**Bicep change:** added a `blobSoftDeleteRetentionDays int = 7` parameter and a new, additive `Microsoft.Storage/storageAccounts/blobServices` child resource (`deleteRetentionPolicy: { enabled: true, days: 7 }`) to `infra/modules/storage.bicep` — deliberately scoped to blob soft delete only, not container soft delete/versioning/change feed (those remain off, documented as a deliberate, separate decision, not silently reintroduced). `az bicep build --file infra/modules/storage.bicep` — clean. `infra/modules/storage.json` twin regenerated.
+
+**7-day window rationale (documented in the Bicep header comment, SAD §22.1, and `gdpr-erasure-evidence.md`):** short enough to keep the GDPR erasure tail small and precisely bounded, long enough to give real protection against an accidental application-bug deletion — the actual reason soft delete exists. **GDPR tension stated explicitly:** `EraseDataSubject`'s `eraseBlobsForThreads` hard-deletes image blobs on an erasure request; with soft delete on, Azure now retains a recoverable copy for up to 7 days before permanent purge, so erasure completion for blob storage is "immediate app-level delete + up to 7 days before Azure's own copy is gone," not instant.
+
+**What-if before deploying:** `az deployment group what-if` scoped to `modules/storage.bicep` alone showed exactly one change (`~ Microsoft.Storage/storageAccounts/.../blobServices/default: properties.deleteRetentionPolicy.enabled: false => true, + days: 7`); the storage account resource itself, the management policy, and the delete lock all reported `= Nochange`.
+
+**Deployed:** `az deployment group create --resource-group rg-azurechat-val1 --mode Incremental --template-file infra/modules/storage.bicep --parameters customerSlug=val1 location=westeurope tags=... --name deploy-storage-sr007-val1` — `provisioningState: Succeeded`.
+
+**Post-deploy verification:**
+- `az storage account blob-service-properties show` → `deleteRetentionPolicy: { enabled: true, days: 7 }`; `changeFeed`, `containerDeleteRetentionPolicy`, `isVersioningEnabled` all still `null` (unchanged, deliberate).
+- `az storage account show --query "{publicNetworkAccess, allowBlobPublicAccess, allowSharedKeyAccess, minimumTlsVersion, sku, privateEndpointConnections, tags}"` — all identical to the pre-change values captured earlier in this session (`Disabled`, `false`, `false`, `TLS1_2`, `Standard_LRS`, `pe-st-val1`, same tags).
+- `az resource lock list` — `CanNotDelete` / `st-val1-delete-lock` still present.
+
+### Gates (both parts)
+- `az bicep build` clean on every touched file (`main.bicep`, `modules/cosmos-db.bicep`, `modules/storage.bicep`) — no new warnings/errors, twins regenerated (`main.json`, `cosmos-db.json`, `storage.json`).
+- `bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1` → **all checks passed, exit 0**, including the managed-identity smoke test (`GET / → 200`) — run after the Cosmos migration completed.
+- Site check: `curl -o /dev/null -w "%{http_code}" https://val1-sales360.pixelflow.dk/` → `200`, both before starting and after both changes were live.
+
+### Scope discipline
+Touched only `infra/main.bicep`, `infra/main.json`, `infra/modules/cosmos-db.bicep`, `infra/modules/cosmos-db.json`, `infra/modules/storage.bicep`, `infra/modules/storage.json`, plus `docs/`. Explicitly identified (via the full-stack what-if) but **did not touch** in-flight/unrelated changes in Key Vault, Application Insights, AI Search, App Service Plan, App Service, or the not-yet-deployed Speech feature — those belong to other work and are reported here, not acted on. No git commit/push performed — lead commits.
+
+### Result: CLOSED
+Both halves of SR-007 (Cosmos backup policy, blob soft delete) are now implemented in Bicep as the forward-looking source of truth for all future deployments, and deployed live to `rg-azurechat-val1`/val1 with full before/after verification that no safety-critical property (`disableLocalAuth`, `publicNetworkAccess`, managed identities, RBAC, private endpoints, VNet integration, delete locks, tags, region) was reset. SAD §22.1/§22.3 corrected to describe what's actually deployed instead of an aspirational decision. **Remains for the operator:** none for val1 — both changes are live and verified. For future customer stacks: `enableContinuousBackup` defaults to `true` and `blobSoftDeleteRetentionDays` defaults to `7`, so new deployments get both by default without further action; only a customer with a documented reason to stay on Periodic backup would need `enableContinuousBackup: false` set explicitly at provisioning time (irreversible once Continuous is chosen, reversible the other direction only by never migrating in the first place).
+
+---
+
+## 2026-08-11 — H-2 closed: App Service ingress restricted to Cloudflare IP ranges (default-deny), val1 exception documented and deployed
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Finding re-confirmed live before acting:** `az webapp config show -g rg-azurechat-val1 -n app-azurechat-val1` showed `ipSecurityRestrictions: [{ ipAddress: "Any", action: "Allow" }]`, `ipSecurityRestrictionsDefaultAction: null` (effectively Allow) — `app-azurechat-val1.azurewebsites.net` was fully open to the internet, confirming H-2 exactly as described.
+
+**Cloudflare IP ranges fetched at authoring time:** `curl https://www.cloudflare.com/ips-v4` (15 CIDR blocks) and `curl https://www.cloudflare.com/ips-v6` (7 CIDR blocks), pinned verbatim into `modules/app-service.bicep` with a dated comment (`pinned 2026-08-11`) and a note to re-fetch periodically.
+
+**Bicep change:** `infra/modules/app-service.bicep` — added `restrictIngressToCloudflare bool = true` param, `cloudflareIpv4Ranges`/`cloudflareIpv6Ranges` vars (the fetched lists), a `cloudflareIpSecurityRestrictions` computed array (Allow rules, one per CIDR), and wired `siteConfig.ipSecurityRestrictions`/`ipSecurityRestrictionsDefaultAction` to switch between the Cloudflare allow-list + `Deny` default (when true) and an empty list + `Allow` default (when false — functionally identical to the site's current wide-open state, confirmed below). Also explicitly set `scmIpSecurityRestrictionsUseMain: false` with a comment explaining why SCM is deliberately NOT restricted to the same list (Cloudflare doesn't proxy `*.scm.azurewebsites.net`; doing so would break `az webapp deploy` and the future GitHub Actions deploy pipeline). `infra/main.bicep` — added the same `restrictIngressToCloudflare bool = true` param, wired through to `appServiceModule`. `infra/environments/validation.bicepparam` — added `param restrictIngressToCloudflare = false` with a dated comment explaining the val1 exception (unproxied, App Service-managed cert — enabling the restriction would 502 the live site). `az bicep build` on both touched files — clean (module: zero new warnings; `main.bicep`: only the pre-existing documented warning set). `infra/main.json` and `infra/modules/app-service.json` twins regenerated.
+
+**Behavioral-equivalence check before deploying the val1 exception:** re-confirmed via `az webapp config show` that val1's current state (`ipSecurityRestrictionsDefaultAction: null` + one catch-all `Allow`/`Any` rule) and the new template's `false` branch (`ipSecurityRestrictionsDefaultAction: 'Allow'` + empty `ipSecurityRestrictions: []`) are functionally identical — both mean "no restriction, everything allowed." Also confirmed live `scmIpSecurityRestrictionsUseMain: false` already, matching the new template's explicit value exactly — no behavior change there either.
+
+**What-if before deploying:** scoped `az deployment group what-if` against `modules/app-service.bicep` (all params supplied with exact live values fetched via `az cognitiveservices account show`/`az cosmosdb show`/`az keyvault show`/`az monitor app-insights component show`, `restrictIngressToCloudflare=false`) showed exactly two resources modified: `plan-azurechat-val1` (a pre-existing, unrelated `freeOfferExpirationTime` cosmetic diff, already present before this change) and `app-azurechat-val1` (`+ ipSecurityRestrictionsDefaultAction: "Allow"`, `+ scmIpSecurityRestrictionsUseMain: false`, plus RP-injected defaults `localMySqlEnabled`/`netFrameworkVersion`/`vnetRouteAllEnabled` being made explicit — `vnetRouteAllEnabled` confirmed already `true`). No `appSettings` diff (that array was untouched by this change) and no `ipSecurityRestrictions` array entries added (empty list, as expected for the `false` branch).
+
+**Deployed:** `az deployment group create --resource-group rg-azurechat-val1 --mode Incremental --template-file infra/modules/app-service.bicep --parameters ... restrictIngressToCloudflare=false --name deploy-appservice-h2-val1` — `provisioningState: Succeeded`.
+
+**Post-deploy verification:**
+- `az webapp config show` → `ipSecurityRestrictionsDefaultAction: "Allow"`, one catch-all `Allow`/`Any` rule still present, `scmIpSecurityRestrictionsUseMain: false`, `linuxFxVersion: "NODE|22-lts"`, `vnetRouteAllEnabled: true` — all as expected.
+- `az webapp identity show` → `SystemAssigned`, `principalId` unchanged from before the deploy (managed identity, and therefore all existing RBAC role assignments tied to it, intact).
+- **Transient cold-start timeout, resolved:** the first post-deploy site check (`curl https://val1-sales360.pixelflow.dk/`) timed out after 30s with 0 bytes received (TLS handshake succeeded, then hung) — a config change to `siteConfig` triggers an App Service restart/recycle. Confirmed this was a cold start, not a real outage, by hitting `https://app-azurechat-val1.azurewebsites.net/` directly (`200`, but `35.3s` — clearly a cold start), then re-hitting the custom domain (`200` in `0.33s`). `az webapp show` confirmed `state: Running`, `availabilityState: Normal` throughout.
+
+### Gates
+- `az bicep build` clean on `modules/app-service.bicep` and `main.bicep` — no new warnings/errors; twins regenerated.
+- `bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1` → **all checks passed, exit 0**, including the managed-identity smoke test (`GET / → 200`) — run after the app had warmed back up.
+- Site check: `200` on both `https://val1-sales360.pixelflow.dk/` and `https://app-azurechat-val1.azurewebsites.net/` post-deploy (after the cold start resolved).
+
+### Scope discipline
+Touched only `infra/main.bicep`, `infra/main.json`, `infra/modules/app-service.bicep`, `infra/modules/app-service.json`, `infra/environments/validation.bicepparam`, plus `docs/`. Did not touch Key Vault, observability/alerts, or any other module. No git commit/push performed — lead commits.
+
+### Result: CLOSED
+`app-azurechat-{slug}.azurewebsites.net` is now restricted to Cloudflare's published edge IP ranges (default-deny) for every customer by default. val1 is the sole, explicitly documented, dated exception — still fully open — because it is not yet proxied through Cloudflare; this is stated in three places (`modules/app-service.bicep` header, `infra/environments/validation.bicepparam`, `docs/known-limitations.md`) so it cannot be silently forgotten or copied to a production customer. **Remains for the operator:** (1) re-proxy val1 through Cloudflare with an Origin Certificate (SAD §7.2) and flip `restrictIngressToCloudflare` to `true` for it, coordinating with the `cloudflare-dns-engineer` agent; (2) a separate, deliberately deferred pass to harden the SCM/Kudu endpoint with GitHub Actions' own IP ranges once `provision-customer.yml` exists and those ranges are known; (3) periodically re-fetch Cloudflare's IP ranges from the two published URLs and update the pinned list in `modules/app-service.bicep` if they change.
+
+---
+
+## 2026-08-11 — H-3 closed (definitions only, NOT assigned): Azure Policy guardrails authored in `infra/policy/`
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Finding re-confirmed live before acting:** `az policy definition list` and `az policy assignment list`, both filtered for anything Sales-Prism-related, returned empty arrays — no subscription-level policy enforcement existed anywhere, confirming SAD §16.2's claim was aspirational, exactly as H-3 described. Enforcement was genuinely only the `@allowed()` Bicep decorators.
+
+**Authored (new directory `infra/policy/`, four files):**
+- `deny-non-eu-region.bicep` — `Microsoft.Authorization/policyDefinitions`, denies any location-scoped resource outside `northeurope`/`westeurope`/`swedencentral` (mirrors the `allOf` pattern used by Azure's own built-in "Allowed locations" policy — `location notEquals 'global'` AND `location notIn allowedLocations`).
+- `deny-openai-global-standard.bicep` — denies `sku.name = GlobalStandard` on `Microsoft.CognitiveServices/accounts/deployments`. The policy alias used (`Microsoft.CognitiveServices/accounts/deployments/sku.name`) was looked up via `az provider show -n Microsoft.CognitiveServices --expand "resourceTypes/aliases"` before writing the rule — not guessed. Live-checked that this wouldn't retroactively flag anything: `az cognitiveservices account deployment list -n oai-azurechat-val1` confirms both existing deployments (`gpt-5.4-mini`, `text-embedding-3-small`) are already `DataZoneStandard`.
+- `require-standard-tags.bicep` — denies any location-scoped resource missing one or more of `customer`/`environment`/`managed-by`/`model-tier`. Includes a documented caveat about a possible false-positive on Private Endpoint auto-created NIC child resources, recommending a `DoNotEnforce` dry run before real enforcement.
+- `initiative.bicep` — a `Microsoft.Authorization/policySetDefinitions` grouping all three via `existing` references, for one assignment command instead of three.
+
+**Validation performed (read-only, no resources created):**
+- `az bicep build` on all four files — clean, zero warnings/errors (all four `.json` twins generated for the first time).
+- `az deployment sub validate --location westeurope --template-file infra/policy/<file>.bicep` for all four — every one returned `provisioningState: Succeeded`. This is a genuinely non-mutating ARM validate call (confirmed no resources appear anywhere afterward) — no `az deployment sub create` was run for any of the four files.
+
+**Deliberately NOT done, per this task's explicit instruction:** did not deploy the definitions (`az deployment sub create`) and — far more importantly — did **not** assign any policy or initiative to the subscription. A subscription-wide `deny` policy is an operator decision with real blast radius (can block legitimate future deployments across the whole subscription, not just this repo's), and creating vs. assigning are two very different risk levels — assignment is where actual enforcement (and actual risk of unintended denial) begins. The exact `az deployment sub create` (×4, in dependency order: three definitions, then the initiative) and `az policy assignment create` commands are documented in each file's trailing comment, with a recommendation to assign first with `--enforcement-mode DoNotEnforce` and review `az policy state list` for false positives before switching to `Default`.
+
+### Gates
+- `az bicep build` clean on all four new files.
+- No deployment/assignment performed — the "re-run schema verify + confirm 200" gates from this task's instructions apply to actual deployments to `rg-azurechat-val1`; this blocker made no such deployment, so nothing in `rg-azurechat-val1` changed. Ran the site check anyway as a sanity floor: `curl https://val1-sales360.pixelflow.dk/` → `200`.
+
+### Scope discipline
+New files only: `infra/policy/deny-non-eu-region.bicep`, `.json`, `infra/policy/deny-openai-global-standard.bicep`, `.json`, `infra/policy/require-standard-tags.bicep`, `.json`, `infra/policy/initiative.bicep`, `.json`, plus `docs/`. No existing `infra/` file touched. No git commit/push performed — lead commits.
+
+### Result: CLOSED (as "authored, validated, documented — not assigned", matching the task's explicit boundary)
+The three policy definitions + initiative genuinely compile and validate against this subscription, using a real (looked-up, not guessed) Policy alias for the GlobalStandard check, and don't retroactively flag anything already deployed. SAD §16.2 corrected to state plainly that enforcement is not yet active until an operator assigns these. **Remains for the operator (Kristjan):** run the documented `az deployment sub create` ×4 + `az policy assignment create` sequence (ideally `DoNotEnforce` first) to make SAD §16.2's "hård gardering" claim actually true; separately, consider a follow-up policy for public-network-access-on-AI-services (SAD §16.2 also claims this but it was out of this task's three-definition scope — tracked in `docs/known-limitations.md`).
+
+## val1 — product UI layer deployment (2026-08-11)
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) — proceeded.
+
+**Scope:** app code only, `app-azurechat-val1` in `rg-azurechat-val1`. No `infra/` edits. Two other agents were concurrently editing `infra/` and possibly `src/instrumentation.ts` / `src/next.config.js` in the main working tree, so the build was taken from an isolated git worktree pinned to the committed commit `67c3700` (`feat(product): W1-W8 — make every V1 capability discoverable in the UI`), never from the live working tree.
+
+**Build:** `git worktree add /tmp/salesprism-deploy7 67c3700`; inside its `src/`: `nvm use 22` (`v22.23.2`) → `npm ci --legacy-peer-deps` (1023 packages, clean) → `npm run build`. First build attempt failed inside the default sandboxed shell (`next/font` could not fetch `Playfair Display` from `fonts.gstatic.com` — sandboxed network egress). Re-ran the same build with sandboxing disabled for that one command (network egress only, no other privilege change) — succeeded cleanly, all 37 routes compiled, PWA service worker generated at `public/sw.js` (16203 bytes, timestamped to the build).
+
+**Package:** followed `.github/workflows/open-ai-app.yml`'s exact steps — `.next/standalone` copied to `site-deploy/`, `.next/static` copied into `site-deploy/.next/static`, `public/` copied into `site-deploy/public`, zipped from inside `site-deploy/`. Verified inside the zip before upload: `server.js` present, `public/sw.js` present (16203 bytes, matching the freshly built file — not a stale artifact), `public/manifest.json` present. Zip size 22 MB.
+
+**Deploy:** `az webapp deploy -g rg-azurechat-val1 -n app-azurechat-val1 --type zip --src-path Nextjs-site.zip --async false` → `Deployment has completed successfully`, `RuntimeSuccessful`, `numberOfInstancesFailed: 0`. Confirmed pre-deploy via (name-only query, no secret values) `az webapp config appsettings list ... --query "[].name"`: no `AZURE_OPENAI_API_KEY` present anywhere in app settings. `az webapp config show` confirmed `linuxFxVersion: "NODE|22-lts"` and `appCommandLine: "node server.js"` were already correctly set (unchanged by this deploy).
+
+**Restart + poll:** `az webapp restart` → polling `GET https://val1-sales360.pixelflow.dk/` returned `200` on the very first poll.
+
+**Positive discriminator (new build confirmed live, not just HTTP 200):** unauthenticated `GET` of each of the five new routes returned `307` to `/` (these routes 404'd on the previous build):
+
+| Route | Result |
+|---|---|
+| `/home` | **307** → `/` |
+| `/prepare` | **307** → `/` |
+| `/coach` | **307** → `/` |
+| `/modules` | **307** → `/` |
+| `/documents` | **307** → `/` |
+
+All five PASS.
+
+### Authenticated data-plane verification matrix — BLOCKED-ON-SESSION
+
+Full matrix and investigation notes: `docs/reviews/authenticated-data-plane-matrix.md`.
+
+Summary: no live authenticated Entra ID session was available. The Claude Browser pane (`https://val1-sales360.pixelflow.dk`) initially appeared to hold one — `GET /api/auth/session` returned a populated session (`oid`, `tenantId`, `isAdmin: true`) — but this was traced to a **stale service-worker cache** left over from a session predating today's redeploy: the pane's active SW had an `apis` Cache Storage bucket containing a cached `/api/auth/session` (and `/api/auth/csrf`, `/api/auth/providers`) response. After unregistering that SW and clearing its caches, a live network request to `/api/auth/session` returned `{}` (unauthenticated) — confirmed via `read_network_requests` showing real `200 OK` network calls, not cache hits. No credentials were available to complete an interactive Entra ID login (out of scope per task rules), so items 1–10 of the matrix are **BLOCKED-ON-SESSION**, not faked. Where the task explicitly permits code-level evidence in place of a live second identity (matrix item 9) or documents the credential gap (items generally), that evidence was gathered and is recorded in the matrix doc.
+
+Note: the source that produced the stale SW cache (`next.config.js`) was independently re-checked against the currently deployed build and correctly implements the blanket `NetworkOnly` rule for all same-origin `/api/*` GET/POST routes (commit `dc9eb8e`'s fix) — the stale cache was a leftover from a browser tab predating that fix's deployment, not a regression in the code just deployed.
+
+`src/e2e/authenticated-journeys.spec.ts` was extended with a `describe` block encoding all 10 matrix items as Playwright tests, gated on an `E2E_STORAGE_STATE` env var pointing at a real captured session's storage state; every test in that block currently skips with an explicit reason when the var is unset, per the "do not fake a session" rule.
+
+### Part 3 gates
+
+| Gate | Result |
+|---|---|
+| `bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1` | **PASS**, exit 0 — all checks incl. managed-identity smoke test (`GET / → 200`) |
+| `npx tsc --noEmit` (worktree `src/`) | **PASS** — no errors |
+| `npm run build` (worktree `src/`) | **PASS** — clean build, 37 routes |
+| `npm run test` (worktree `src/`, vitest) | **PASS** — 26 test files, **249/249 tests passed** |
+
+Worktree `/tmp/salesprism-deploy7` removed after all gates passed (`git worktree remove --force`).
+
+### Scope discipline
+Touched only `app-azurechat-val1` (deploy + restart). No `infra/` edits. No DNS changes. No destructive `az` commands. All app-setting queries used `--query "[].name"` (names only, never `-o table`, never a value) per SD-003. Did not touch CSRF logic, cookie flags, ADR-003 canonical identity, or single-tenant config — the one identity-adjacent file touched was `src/e2e/authenticated-journeys.spec.ts` (test-only, additive, no application code). No git commit/push performed — lead commits.
+
+### Result: DEPLOYED, MATRIX BLOCKED-ON-SESSION
+Product UI layer for W1–W8 is live on val1 and confirmed via the positive route discriminator. The authenticated data-plane matrix could not be exercised live — no session, and none was fabricated. A dedicated Entra ID test-user account (or a non-production `CredentialsProvider` escape hatch) remains the same unaddressed gap `e2e/authenticated-journeys.spec.ts` has flagged since before this task; until it exists, matrix items 1–7 and 10 cannot be verified end-to-end by automation.
+
 **Outstanding:** none identified for this specific defect — all three Playwright contexts passed on the live deployment, including the decisive primed-cache regression case, and the fix is confirmed live via byte-identical `sw.js` and correct Workbox rule ordering. As before, a full interactive Entra login (real credentials, possibly MFA) has still not been performed by this agent — out of scope by design (no test credentials exist; see `e2e/authenticated-journeys.spec.ts`) — so session creation past the Entra authorize redirect remains unverified by automation.
