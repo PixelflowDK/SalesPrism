@@ -7,6 +7,7 @@ import { HistoryContainer } from "@/features/common/services/cosmos";
 
 import { RevalidateCache } from "@/features/common/navigation-helpers";
 import { ServerActionResponse } from "@/features/common/server-action-response";
+import { safeLog } from "@/features/common/services/safe-logger";
 import { DocumentIntelligenceInstance } from "@/features/common/services/document-intelligence";
 import { uniqueId } from "@/features/common/util";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
@@ -25,38 +26,36 @@ const MAX_UPLOAD_DOCUMENT_SIZE: number = 20000000;
 const CHUNK_SIZE = 2300;
 const CHUNK_OVERLAP = CHUNK_SIZE * 0.25;
 
-const debug = process.env.DEBUG === "true";
+/** Azure SDK errors (RestError et al.) commonly carry a `statusCode` — never the message/stack. */
+const statusCodeOf = (e: unknown): number | undefined =>
+  (e as { statusCode?: number })?.statusCode;
 
 export const CrackDocument = async (
   formData: FormData
 ): Promise<ServerActionResponse<string[]>> => {
   try {
-    if (debug) console.log("CrackDocument: Ensuring index is created.");
     const response = await EnsureIndexIsCreated();
     if (response.status === "OK") {
-      if (debug) console.log("CrackDocument: Index is created, loading file.");
       const fileResponse = await LoadFile(formData);
       if (fileResponse.status === "OK") {
-        if (debug) console.log("CrackDocument: File loaded successfully, splitting documents.");
         const splitDocuments = await ChunkDocumentWithOverlap(
           fileResponse.response.join("\n")
         );
 
-        if (debug) console.log("CrackDocument: Documents split successfully.");
         return {
           status: "OK",
           response: splitDocuments,
         };
       }
 
-      console.error("CrackDocument: File loading failed.", fileResponse.errors);
+      safeLog.error("document.crack-file-load-failed");
       return fileResponse;
     }
 
-    console.error("CrackDocument: Index creation failed.", response.errors);
+    safeLog.error("document.crack-index-creation-failed");
     return response;
   } catch (e) {
-    console.error("CrackDocument error:", e);
+    safeLog.error("document.crack-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
@@ -72,7 +71,6 @@ const LoadFile = async (
   formData: FormData
 ): Promise<ServerActionResponse<string[]>> => {
   try {
-    if (debug) console.log("LoadFile: Loading file from form data.");
     const file: File | null = formData.get("file") as unknown as File;
 
     const fileSize = process.env.MAX_UPLOAD_DOCUMENT_SIZE
@@ -80,12 +78,10 @@ const LoadFile = async (
       : MAX_UPLOAD_DOCUMENT_SIZE;
 
     if (file && file.size < fileSize) {
-      if (debug) console.log("LoadFile: File size is within the acceptable limit.");
       const client = DocumentIntelligenceInstance();
 
       const blob = new Blob([file], { type: file.type });
 
-      if (debug) console.log("LoadFile: Beginning document analysis.");
       const poller = await client.beginAnalyzeDocument(
         "prebuilt-read",
         await blob.arrayBuffer()
@@ -98,7 +94,6 @@ const LoadFile = async (
         for (const paragraph of paragraphs) {
           docs.push(paragraph.content);
         }
-        if (debug) console.log("LoadFile: Document analysis completed successfully.");
       }
 
       return {
@@ -106,7 +101,7 @@ const LoadFile = async (
         response: docs,
       };
     } else {
-      console.error("LoadFile: File size is too large.");
+      safeLog.warn("document.load-file-too-large");
       return {
         status: "ERROR",
         errors: [
@@ -117,7 +112,7 @@ const LoadFile = async (
       };
     }
   } catch (e) {
-    console.error("LoadFile error:", e);
+    safeLog.error("document.load-file-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
@@ -133,7 +128,6 @@ export const FindAllChatDocuments = async (
   chatThreadID: string
 ): Promise<ServerActionResponse<ChatDocumentModel[]>> => {
   try {
-    if (debug) console.log("FindAllChatDocuments: Searching documents for chatThreadID:", chatThreadID);
     const querySpec: SqlQuerySpec = {
       query:
         "SELECT * FROM root r WHERE r.type=@type AND r.chatThreadId = @threadId AND r.isDeleted=@isDeleted",
@@ -158,13 +152,12 @@ export const FindAllChatDocuments = async (
       .fetchAll();
 
     if (resources) {
-      if (debug) console.log(`FindAllChatDocuments: ${resources.length} Documents found.`);
       return {
         status: "OK",
         response: resources,
       };
     } else {
-      console.error("FindAllChatDocuments: No documents found.");
+      safeLog.warn("document.find-all-chat-documents-empty");
       return {
         status: "ERROR",
         errors: [
@@ -175,7 +168,7 @@ export const FindAllChatDocuments = async (
       };
     }
   } catch (e) {
-    console.error("FindAllChatDocuments error:", e);
+    safeLog.error("document.find-all-chat-documents-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
@@ -217,7 +210,7 @@ export const FindAllChatDocumentsForCurrentUser = async (): Promise<
 
     return { status: "OK", response: resources };
   } catch (e) {
-    console.error("FindAllChatDocumentsForCurrentUser error:", e);
+    safeLog.error("document.find-all-for-current-user-failed", { statusCode: statusCodeOf(e) });
     return { status: "ERROR", errors: [{ message: `${e}` }] };
   }
 };
@@ -313,7 +306,7 @@ export const RemoveChatDocument = async (
 
     return { status: "OK", response: true };
   } catch (e) {
-    console.error("RemoveChatDocument error:", e);
+    safeLog.error("document.remove-chat-document-failed", { statusCode: statusCodeOf(e) });
     return { status: "ERROR", errors: [{ message: `${e}` }] };
   }
 };
@@ -357,8 +350,6 @@ export const CreateChatDocument = async (
     });
 
     if (resource) {
-      if (debug) console.log("CreateChatDocument: Document created successfully.");
-
       // SAD §8.6 activity tracking — best-effort, count-only (no filename).
       const tenantSlug = await getCurrentTenantSlug();
       await RecordUploadEvent({ tenantSlug, actorId: modelToSave.userId });
@@ -369,7 +360,7 @@ export const CreateChatDocument = async (
       };
     }
 
-    console.error("CreateChatDocument: Unable to save chat document.");
+    safeLog.error("document.create-chat-document-save-failed");
     return {
       status: "ERROR",
       errors: [
@@ -379,7 +370,7 @@ export const CreateChatDocument = async (
       ],
     };
   } catch (e) {
-    console.error("CreateChatDocument error:", e);
+    safeLog.error("document.create-chat-document-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
@@ -394,11 +385,9 @@ export const CreateChatDocument = async (
 export async function ChunkDocumentWithOverlap(
   document: string
 ): Promise<string[]> {
-  if (debug) console.log("ChunkDocumentWithOverlap: Starting chunking process.");
   const chunks: string[] = [];
 
   if (document.length <= CHUNK_SIZE) {
-    if (debug) console.log("ChunkDocumentWithOverlap: Document length is within single chunk size.");
     chunks.push(document);
     return chunks;
   }
@@ -412,6 +401,5 @@ export async function ChunkDocumentWithOverlap(
     startIndex = endIndex - CHUNK_OVERLAP;
   }
 
-  if (debug) console.log("ChunkDocumentWithOverlap: Chunking completed.", chunks);
   return chunks;
 }

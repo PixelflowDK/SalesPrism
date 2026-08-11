@@ -11,11 +11,14 @@ import {
   AZURE_OPENAI_EMBEDDING_DIMENSIONS,
   getEmbeddingModel,
 } from "@/features/common/services/azure-ai";
+import { safeLog } from "@/features/common/services/safe-logger";
 import { uniqueId } from "@/features/common/util";
 import { SearchIndex } from "@azure/search-documents";
 import { embed, embedMany } from "ai";
 
-const debug = process.env.DEBUG === "true";
+/** Azure SDK errors (RestError et al.) commonly carry a `statusCode` — never the message/stack. */
+const statusCodeOf = (e: unknown): number | undefined =>
+  (e as { statusCode?: number })?.statusCode;
 
 export interface AzureSearchDocumentIndex {
   id: string;
@@ -36,7 +39,6 @@ export const SimpleSearch = async (
   filter?: string
 ): Promise<ServerActionResponse<Array<DocumentSearchResponse>>> => {
   try {
-    if (debug) console.log("Executing SimpleSearch with searchText:", searchText, "filter:", filter);
     const instance = AzureAISearchInstance<AzureSearchDocumentIndex>();
     const searchResults = await instance.search(searchText, { filter: filter });
 
@@ -48,13 +50,12 @@ export const SimpleSearch = async (
       });
     }
 
-    if (debug) console.log("SimpleSearch results:", results);
     return {
       status: "OK",
       response: results,
     };
   } catch (e) {
-    console.error("SimpleSearch error:", e);
+    safeLog.error("search.simple-search-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
@@ -72,13 +73,10 @@ export const SimilaritySearch = async (
   filter?: string
 ): Promise<ServerActionResponse<Array<DocumentSearchResponse>>> => {
   try {
-    if (debug) console.log("Executing SimilaritySearch with searchText:", searchText, "k:", k, "filter:", filter);
     const { embedding } = await embed({
       model: getEmbeddingModel(),
       value: searchText,
     });
-
-    if (debug) console.log("Embedding obtained, dimensions:", embedding.length);
 
     const searchClient = AzureAISearchInstance<AzureSearchDocumentIndex>();
     const searchResults = await searchClient.search(searchText, {
@@ -104,13 +102,12 @@ export const SimilaritySearch = async (
       });
     }
 
-    if (debug) console.log("SimilaritySearch results:", results);
     return {
       status: "OK",
       response: results,
     };
   } catch (e) {
-    console.error("SimilaritySearch error:", e);
+    safeLog.error("search.similarity-search-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
@@ -135,7 +132,6 @@ export const IndexDocuments = async (
   chatThreadId: string
 ): Promise<Array<ServerActionResponse<boolean>>> => {
   try {
-    if (debug) console.log("Indexing documents with fileName:", fileName, "chatThreadId:", chatThreadId);
     const documentsToIndex: AzureSearchDocumentIndex[] = [];
 
     for (const doc of docs) {
@@ -150,8 +146,6 @@ export const IndexDocuments = async (
 
       documentsToIndex.push(docToAdd);
     }
-
-    if (debug) console.log("Documents to index:", documentsToIndex);
 
     const instance = AzureAISearchInstance();
     const embeddingsResponse = await EmbedDocuments(documentsToIndex);
@@ -180,13 +174,12 @@ export const IndexDocuments = async (
         }
       });
 
-      if (debug) console.log("IndexDocuments response:", response);
       return response;
     }
 
     return [embeddingsResponse];
   } catch (e) {
-    console.error("IndexDocuments error:", e);
+    safeLog.error("search.index-documents-failed", { statusCode: statusCodeOf(e) });
     return [
       {
         status: "ERROR",
@@ -204,7 +197,6 @@ export const DeleteDocuments = async (
   chatThreadId: string
 ): Promise<Array<ServerActionResponse<boolean>>> => {
   try {
-    if (debug) console.log("Deleting documents for chatThreadId:", chatThreadId);
     const documentsInChatResponse = await SimpleSearch(
       undefined,
       `chatThreadId eq '${chatThreadId}'`
@@ -235,13 +227,12 @@ export const DeleteDocuments = async (
         }
       });
 
-      if (debug) console.log("DeleteDocuments response:", response);
       return response;
     }
 
     return [documentsInChatResponse];
   } catch (e) {
-    console.error("DeleteDocuments error:", e);
+    safeLog.error("search.delete-documents-failed", { statusCode: statusCodeOf(e) });
     return [
       {
         status: "ERROR",
@@ -276,7 +267,6 @@ export const DeleteDocumentsByFileNameInThread = async (
     const filter = `chatThreadId eq '${escapeODataLiteral(chatThreadId)}' and metadata eq '${escapeODataLiteral(
       fileName
     )}'`;
-    if (debug) console.log("Deleting documents by fileName in thread:", filter);
     const matchingDocumentsResponse = await SimpleSearch(undefined, filter);
 
     if (matchingDocumentsResponse.status === "OK") {
@@ -298,7 +288,7 @@ export const DeleteDocumentsByFileNameInThread = async (
 
     return [matchingDocumentsResponse];
   } catch (e) {
-    console.error("DeleteDocumentsByFileNameInThread error:", e);
+    safeLog.error("search.delete-documents-by-filename-failed", { statusCode: statusCodeOf(e) });
     return [{ status: "ERROR", errors: [{ message: `${e}` }] }];
   }
 };
@@ -320,7 +310,6 @@ export const DeleteDocumentsByUser = async (
   userId: string
 ): Promise<Array<ServerActionResponse<boolean>>> => {
   try {
-    if (debug) console.log("Deleting documents for userId (GDPR erasure)");
     const documentsForUserResponse = await SimpleSearch(
       undefined,
       `user eq '${escapeODataLiteral(userId)}'`
@@ -351,13 +340,12 @@ export const DeleteDocumentsByUser = async (
         }
       });
 
-      if (debug) console.log("DeleteDocumentsByUser response:", response);
       return response;
     }
 
     return [documentsForUserResponse];
   } catch (e) {
-    console.error("DeleteDocumentsByUser error:", e);
+    safeLog.error("search.delete-documents-by-user-failed", { statusCode: statusCodeOf(e) });
     return [
       {
         status: "ERROR",
@@ -375,7 +363,6 @@ export const EmbedDocuments = async (
   documents: Array<AzureSearchDocumentIndex>
 ): Promise<ServerActionResponse<Array<AzureSearchDocumentIndex>>> => {
   try {
-    if (debug) console.log("Embedding documents:", documents.map((d) => d.id));
     const contentsToEmbed = documents.map((d) => d.pageContent);
 
     const { embeddings } = await embedMany({
@@ -383,19 +370,16 @@ export const EmbedDocuments = async (
       values: contentsToEmbed,
     });
 
-    if (debug) console.log(`Embeddings received: ${embeddings.length}`);
-
     embeddings.forEach((embedding, index) => {
       documents[index].embedding = embedding;
     });
 
-    if (debug) console.log("Documents after embedding:", documents);
     return {
       status: "OK",
       response: documents,
     };
   } catch (e) {
-    console.error("EmbedDocuments error:", e);
+    safeLog.error("search.embed-documents-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
@@ -411,16 +395,16 @@ export const EnsureIndexIsCreated = async (): Promise<
   ServerActionResponse<SearchIndex>
 > => {
   try {
-    console.log("Ensuring index is created: ", process.env.AZURE_SEARCH_INDEX_NAME);
+    safeLog.info("search.index-ensure-started");
     const client = AzureAISearchIndexClientInstance();
     const result = await client.getIndex(process.env.AZURE_SEARCH_INDEX_NAME);
-    console.log("Index exists: ", result);
+    safeLog.info("search.index-already-exists");
     return {
       status: "OK",
       response: result,
     };
   } catch (e) {
-    console.log(`Error Creating index:${e}`);
+    safeLog.warn("search.index-not-found-creating", { statusCode: statusCodeOf(e) });
     return await CreateSearchIndex();
   }
 };
@@ -429,7 +413,7 @@ const CreateSearchIndex = async (): Promise<
   ServerActionResponse<SearchIndex>
 > => {
   try {
-    console.log("Creating search index");
+    safeLog.info("search.index-create-started");
     const client = AzureAISearchIndexClientInstance();
     const result = await client.createIndex({
       name: process.env.AZURE_SEARCH_INDEX_NAME,
@@ -495,13 +479,13 @@ const CreateSearchIndex = async (): Promise<
       ],
     });
 
-    console.log("Search index created:", result);
+    safeLog.info("search.index-create-succeeded");
     return {
       status: "OK",
       response: result,
     };
   } catch (e) {
-    console.error("CreateSearchIndex error:", e);
+    safeLog.error("search.index-create-failed", { statusCode: statusCodeOf(e) });
     return {
       status: "ERROR",
       errors: [
