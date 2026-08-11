@@ -2,7 +2,7 @@
   "phase": "Autonomous product completion \u2014 Streams A (product UI) + B (SR-001/SR-010) running",
   "lastCompletedTask": "Product UI layer W1-W8 committed (67c3700) \u2014 F-01/F-02/modules/documents now discoverable; 249 tests",
   "branch": "develop",
-  "lastStableCommit": "67c3700",
+  "lastStableCommit": "bade667",
   "activeAgents": [
     "product-ui-worker (W1-W8)",
     "infra-worker (SR-001 + SR-010)"
@@ -19,10 +19,10 @@
     "gpt-5-nano",
     "text-embedding-3-large"
   ],
-  "nextAction": "Integrate Stream A + B results, then Stream C blockers, data-plane matrix, review gauntlet, acceptance matrix",
+  "nextAction": "Human interactive login needed to unblock the 10-item authenticated matrix (E2E_STORAGE_STATE). Meanwhile: finish SR-001/SR-010 and SR-006/007/H-2/H-3/H-5 streams, then review gauntlet + acceptance matrix.",
   "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
   "approxCreditNote": "7 sonnet worker runs + 1 haiku so far; Fable lead in delegation mode; codex review queued",
-  "updatedAt": "2026-08-11T08:30",
+  "updatedAt": "2026-08-11T09:00",
   "leadModel": "Opus (switched from Fable 5 for cost)",
   "openBlockers": [
     "SR-001",
@@ -39,16 +39,15 @@
     "acceptance matrix"
   ],
   "testCount": 249,
-  "deployedRevision": "a9eead3 (2026-08-10T22:11Z)",
-  "committedNotDeployed": "67c3700 \u2014 PRODUCT UI NOT YET DEPLOYED to val1 (deployed revision still a9eead3). Must deploy + verify nav renders before any completeness claim.",
+  "deployedRevision": "67c3700 (product UI live; /home /prepare /coach /modules /documents all 307 unauthenticated)",
+  "committedNotDeployed": "bade667 \u2014 docs/test only",
   "verifiedWorking": [
-    "Entra auth end-to-end",
-    "canonical identity d4b1b55b-...:7d37f13b-...",
-    "isAdmin via oid",
-    "/ -> /chat redirect",
-    "Cosmos schema + gate",
-    "240 unit tests",
-    "3-state sign-in Playwright suite"
+    "Product UI layer deployed and route-discriminated live",
+    "Cosmos schema + gate (exit 0)",
+    "249 unit tests",
+    "3-state sign-in Playwright suite",
+    "Sign-in click path -> Entra (automated, all 3 SW states)"
   ],
-  "handoffDoc": "docs/session-handoff-current.md"
+  "handoffDoc": "docs/session-handoff-current.md",
+  "CORRECTION_2026_08_11": "Earlier claims that canonical identity / isAdmin / /admin access were PROVEN are WITHDRAWN \u2014 they read a stale service-worker cache of /api/auth/session, not live responses. Authenticated data-plane matrix is BLOCKED-ON-SESSION and requires a human interactive login. Always verify from a cache-cleared context."
 }
