@@ -367,3 +367,121 @@ Completion requirements, in this order:
 ## Standing constraint
 
 Production deployment is **prohibited** until SR-001 and SR-002 both pass. **SR-001 CLOSED 2026-08-11 (SD-005).** SR-002 remains open and still blocks production. Validation-environment work (Phase F, test suite, reviews) is explicitly **not** blocked on either.
+
+---
+
+## SD-006 — Review-gauntlet findings SR-011 / SR-012 / SR-013 (2026-08-11)
+
+Three defects found by the security and GDPR reviews of the new product-UI surface. All
+three were live in the deployed build. All three are fixed in commit `7c3432c`, deployed
+and verified on val1.
+
+### SR-011 (HIGH, security) — cross-user destruction of indexed RAG content
+
+`DeleteDocumentsByFileNameInThread` deletes AI Search chunks by `chatThreadId + fileName`
+with **no user clause** in its OData filter. Its own doc comment states callers must have
+verified thread ownership first — a contract that was asserted in prose and enforced
+nowhere.
+
+Both callers live in a `"use server"` module, so each is an individually POST-able Server
+Action; being imported by an authenticated page protects nothing. Two calls sufficed:
+`CreateChatDocument(victimFileName, victimThreadId)` mints a row the attacker genuinely
+owns but which points at another user's thread; `RemoveChatDocument` then passes the
+pre-existing `r.userId === callerId` check and cascades into deleting the victim's indexed
+chunks. The victim's Cosmos row survives, so the document still lists in `/documents`
+while its RAG content is silently gone.
+
+Not mass-exploitable — thread ids are 36-character nanoids — but a scriptable, targeted
+cross-user data-destruction path against anyone whose thread id has been shared.
+**Fixed:** both entry points verify thread ownership. Owning the row is not owning the
+thread. Regression tests fail with the guards stubbed out and pass with them in place.
+
+### SR-012 (HIGH, GDPR) — raw identity PII shipped to Application Insights on every login
+
+`auth-api.ts` logged the entire Entra ID-token claim set plus email, `oid`, tenant id and
+a base64 data-URL of the user's profile photo, unconditionally, on every sign-in. The
+GitHub provider did the same.
+
+This was inert for as long as console output went nowhere durable. **SR-010 — added in
+this same session — is what made it live**, by enabling the OpenTelemetry `console`
+bridge. From that point every sign-in shipped that payload into Application Insights, a
+store no erasure path reaches: a fully erased data subject still had their identity
+sitting in telemetry for the retention window.
+
+Worth stating plainly: this was a privacy regression introduced by our own observability
+work, not an inherited defect. An improvement to one system turned a dormant defect in
+another into a live one, and nothing in the SR-010 change flagged the interaction.
+
+**Fixed:** routed through `safeLog`'s allow-list. Only the canonical id is logged — the
+same value already stored as the Cosmos partition key.
+
+### SR-013 (HIGH, GDPR) — three document types written but never erasable
+
+`PROMPT`, `PERSONA` and `EXTENSION` — upstream azurechat types, all written keyed to
+`currentUserId()` from live reachable pages — were absent from the erasure registry.
+`PROMPT` was the worst: `ConfigContainer` has `defaultTtl: -1`, so those documents were
+retained forever with no erasure path at all, an Art. 17 and an Art. 5(1)(e) problem
+simultaneously.
+
+**The more important finding is why nobody noticed.** The erasure service's module doc
+states that a test fails "if a new store is added without erasure coverage". That test
+compared the registry against a hand-written list of document types — and that list
+omitted the same three types the registry omitted. Both sides of the comparison shared
+one blind spot, so the guard could not fail. A guard maintained by hand, by the same
+person who forgot to update the thing it guards, is not a guard.
+
+**Fixed:** all three are erasable, and the test now discovers every `*_ATTRIBUTE`
+constant by reading the source tree, with a floor assertion so a renamed convention
+cannot shrink it to empty and pass for the wrong reason. Verified by adding a throwaway
+unclassified constant: the test failed naming it, and passed again once removed.
+
+---
+
+## SD-007 — Entra credential inventory for `salescoach360-val1-auth` (2026-08-11)
+
+Two client secrets exist on app registration `d67a176e-852e-451a-ad66-b9912e53a1c5`:
+
+| displayName | keyId | valid from | expires | status |
+|---|---|---|---|---|
+| `val1-90d-20260811-kv` | `2e7b4f94-781e-4d01-844e-2366ac622d6f` | 2026-08-11T14:49:50Z | 2026-11-09 | **in use** |
+| `val1-90d-20260810-rotated` | `21a8e6e1-12bd-427c-b7cb-65dfacc49131` | 2026-08-10T15:45:20Z | 2026-11-08 | stale, still valid |
+
+The orphaned third credential `val1-90d-20260811-kv-managed`
+(`c8e5c660-5b24-42cf-be7f-a89589e23723`), whose value was never captured, **has been
+deleted** — confirmed absent from the live credential list.
+
+**Which credential the vault holds, established without reading any secret value:** the
+`azure-ad-client-secret` resource in `kv-azurechat-val1` has an ARM control-plane
+`created` timestamp of 2026-08-11T14:49:54Z — four seconds after `val1-90d-20260811-kv`
+was minted. Sign-in works against that vault value. The vault therefore holds
+`val1-90d-20260811-kv`, and `val1-90d-20260810-rotated` is unused.
+
+**Decision: the stale credential is NOT being deleted in this session, deliberately.**
+The four-second correlation is strong evidence but it is still inference, and a secret's
+value cannot be recovered once deleted. An earlier attempt in this same project to tidy
+up credentials on similarly confident reasoning took val1 authentication down (SD-004).
+The stale credential is scoped to one app registration, expires 2026-11-08, and removing
+it is hygiene rather than a blocker — not worth risking a second self-inflicted outage.
+
+**Recommended operator action:** delete keyId `21a8e6e1-12bd-427c-b7cb-65dfacc49131`,
+then immediately confirm `POST /api/auth/signin/azure-ad` still returns a 302 to
+`login.microsoftonline.com`. If it does not, mint a new secret and rewrite the vault via
+`infra/modules/keyvault-secrets.bicep` — the recovery path is known and takes minutes.
+
+---
+
+## Correction to the standing constraint
+
+The "Standing constraint" section above is **out of date** and is superseded here:
+
+- **SR-001 — CLOSED** (SD-005). Note the closure differs from the finding's original
+  wording: App Service Key Vault *references* cannot work against a private-endpoint-only
+  vault, because the platform control plane does not traverse VNet integration. The
+  implemented pattern is in-app `DefaultAzureCredential` retrieval, which is stronger — no
+  secret value lands in App Service settings at all.
+- **SR-002 — CLOSED.** Verified live 2026-08-11: `disableLocalAuth: true` on both
+  `oai-azurechat-val1` (OpenAI) and `docintel-azurechat-val1` (FormRecognizer).
+
+Production is no longer blocked by SR-001 or SR-002. It remains blocked by **SR-008**
+(no break-glass accounts — see `docs/runbooks/SR-008-break-glass-accounts.md`), and the
+authenticated data-plane matrix is still unproven pending a human interactive login.

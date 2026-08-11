@@ -1,64 +1,43 @@
 {
-  "phase": "Stage 7 \u2014 blockers mostly closed; BLOCKED on operator RBAC for SR-001 (val1 auth DOWN)",
-  "lastCompletedTask": "SR-006/SR-007/H-2/H-5/SR-010 closed with live evidence; instrumentation.node.ts committed",
+  "phase": "Stage 7 — review gauntlet running; all production blockers closed except SR-008 (operator-only)",
+  "lastCompletedTask": "SR-011/SR-012/SR-013 fixed and deployed; provisioning gates wired and proven live; H-3 policy definitions deployed + audit-only assignment",
   "branch": "develop",
-  "lastStableCommit": "e532b22",
-  "activeAgents": [
-    "product-ui-worker (W1-W8)",
-    "infra-worker (SR-001 + SR-010)"
-  ],
-  "blockers": [
-    "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large (operator portal request, 2-5 days)"
-  ],
-  "resolved2026_07_30": [
-    "User deleted wedged Cosmos account (verified NotFound) and created both pipeline SP role assignments (Contributor + conditioned RBAC Administrator) at 16:20Z"
-  ],
-  "quotaGated": [
-    "gpt-5.4",
-    "gpt-5.5",
-    "gpt-5-nano",
-    "text-embedding-3-large"
-  ],
-  "nextAction": "Human interactive login needed to unblock the 10-item authenticated matrix (E2E_STORAGE_STATE). Meanwhile: finish SR-001/SR-010 and SR-006/007/H-2/H-3/H-5 streams, then review gauntlet + acceptance matrix.",
-  "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
-  "approxCreditNote": "7 sonnet worker runs + 1 haiku so far; Fable lead in delegation mode; codex review queued",
-  "updatedAt": "2026-08-11T15:00",
-  "leadModel": "Opus (switched from Fable 5 for cost)",
-  "openBlockers": [
-    "SR-001 (OPEN \u2014 causing the outage)",
-    "SR-008 break-glass accounts",
-    "H-3 policy assignment (operator)",
-    "task#30 provisioning gate",
-    "authenticated data-plane matrix (blocked by outage)",
-    "review gauntlet",
-    "acceptance matrix"
-  ],
-  "testCount": 249,
-  "deployedRevision": "67c3700 (product UI live; /home /prepare /coach /modules /documents all 307 unauthenticated)",
-  "committedNotDeployed": "bade667 \u2014 docs/test only",
-  "verifiedWorking": [
-    "Product UI layer deployed and route-discriminated live",
-    "Cosmos schema + gate (exit 0)",
-    "249 unit tests",
-    "3-state sign-in Playwright suite",
-    "Sign-in click path -> Entra (automated, all 3 SW states)"
-  ],
+  "lastStableCommit": "7c3432c",
+  "deployedRevision": "7c3432c — verified live via https://val1-sales360.pixelflow.dk/api/health",
+  "testCount": 264,
+  "updatedAt": "2026-08-11T18:05",
+  "leadModel": "Opus 5",
   "handoffDoc": "docs/session-handoff-current.md",
-  "CORRECTION_2026_08_11": "Earlier claims that canonical identity / isAdmin / /admin access were PROVEN are WITHDRAWN \u2014 they read a stale service-worker cache of /api/auth/session, not live responses. Authenticated data-plane matrix is BLOCKED-ON-SESSION and requires a human interactive login. Always verify from a cache-cleared context.",
-  "CRITICAL_OUTAGE": "val1 authentication is DOWN. AZURE_AD_CLIENT_SECRET + NEXTAUTH_SECRET are Key Vault references resolving to SecretNotFound (vault empty). /api/auth/providers returns {}. Needs operator RBAC grant (Key Vault Secrets Officer on kv-azurechat-val1) so secrets can be written, OR revert app settings + Bicep to literals.",
-  "ORPHANED_CREDENTIAL": "Entra credential val1-90d-20260811-kv-managed keyId c8e5c660-5b24-42cf-be7f-a89589e23723 is orphaned (value never captured) \u2014 needs operator deletion; classifier-blocked for the agent.",
+
+  "OUTAGE_RESOLVED": "val1 authentication is UP. SR-001 closed via in-app DefaultAzureCredential retrieval from Key Vault (instrumentation-auth-secrets.node.ts). KEY FINDING: App Service Key Vault *references* can NEVER work against a private-endpoint-only vault — the platform control plane does not traverse VNet integration. Do not retry that approach.",
+
   "closedBlockers": [
-    "SR-002",
-    "SR-003",
-    "SR-004",
-    "SR-005",
-    "SR-006",
-    "SR-007",
-    "SR-009",
-    "H-2",
-    "H-5",
-    "SR-010",
-    "C-1",
-    "CR2-1/2/4/5"
-  ]
+    "SR-001", "SR-002", "SR-003", "SR-004", "SR-005", "SR-006", "SR-007",
+    "SR-009", "SR-010", "SR-011", "SR-012", "SR-013",
+    "H-2", "H-5", "C-1", "CR2-1/2/4/5",
+    "task#30 (provisioning gates)"
+  ],
+
+  "openBlockers": [
+    "SR-008 break-glass accounts — OPERATOR ONLY (account creation + password escrow are not automatable). Runbook + acceptance test: docs/runbooks/SR-008-break-glass-accounts.md",
+    "Authenticated data-plane matrix (10 items) — BLOCKED on a human interactive Entra login to produce E2E_STORAGE_STATE",
+    "H-3 enforcement flip — definitions deployed and assigned at subscription scope with --enforcement-mode DoNotEnforce (audit only, denies nothing). Flipping to Default is an operator call.",
+    "Art. 15/20 data-subject export — no export path exists (admin CSV is aggregate analytics only, must NOT be represented as satisfying Art. 15/20)",
+    "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large"
+  ],
+
+  "SR_008_TENANT_FACTS": "Tenant d4b1b55b-6c92-4419-9a08-956e975dce86 has exactly ONE user, and it is an EXTERNAL-sourced (#EXT#) identity that is also the ONLY Global Administrator: admin_insightcast.dk#EXT#@admininsightcast.onmicrosoft.com, oid 7d37f13b-d198-4421-81c6-f0f9076049c7. Zero cloud-only accounts, zero Conditional Access policies. Break-glass accounts MUST exist before the first CA policy is created.",
+
+  "verifiedLive2026_08_11": [
+    "/api/health returns the exact deployed commit (build-time inlined, cannot be spoofed by an app setting)",
+    "/api/auth/providers + signin 302 to Entra on the custom domain",
+    "verify-cosmos-schema.sh 13/13 PASS including App Insights assertion of no theme.get-failed",
+    "App Insights receiving traces (telemetry.selftest.boot)",
+    "264 unit tests, tsc clean, lint clean"
+  ],
+
+  "CORRECTIONS_STANDING": "COMMITTED != DEPLOYED != VERIFIED. Verify from a cache-cleared context and against the RUNNING instance (/api/health), never against git state or a cached response. Earlier claims that canonical identity / isAdmin / /admin access were PROVEN remain WITHDRAWN — they read a stale service-worker cache.",
+
+  "nextAction": "Finish the acceptance matrix (docs/acceptance-matrix.md), fold in the logging-migration worker's result, then Stage 8 delivery docs. The authenticated matrix stays blocked until a human signs in.",
+  "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)"
 }

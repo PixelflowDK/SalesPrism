@@ -28,11 +28,31 @@ export const CHAT_HISTORY_TTL_SECONDS = 90 * 24 * 60 * 60; // 7,776,000
 export const ACTIVITY_EVENT_TTL_SECONDS = 30 * 24 * 60 * 60; // 2,592,000
 
 /**
- * `HistoryContainer` holds ONLY chat data (`ChatThreadModel`,
- * `ChatMessageModel`, `ChatDocumentModel`, `ChatCitationModel` — see
- * chat-services/models.ts) — no tenant/account configuration lives here, so
- * a container-wide `defaultTtl` is safe and matches SAD §32.1's "chat
- * prompts and answers" / "uploaded documents" rows directly.
+ * `HistoryContainer` holds chat data (`ChatThreadModel`, `ChatMessageModel`,
+ * `ChatDocumentModel`, `ChatCitationModel` — see chat-services/models.ts),
+ * for which a container-wide `defaultTtl` matches SAD §32.1's "chat prompts
+ * and answers" / "uploaded documents" rows directly.
+ *
+ * CORRECTION (SR-013). This comment previously claimed the container holds
+ * ONLY chat data and that "no tenant/account configuration lives here". That
+ * was false, and the false claim was load-bearing — it is the justification
+ * for the container-wide TTL. Two upstream azurechat types also live here:
+ *
+ *   - `PERSONA`   (persona-page/persona-services/persona-service.ts)
+ *   - `EXTENSION` (extensions-page/extension-services/extension-service.ts)
+ *
+ * Both are seller-authored CONFIGURATION, not conversation, and both are
+ * therefore swept by the 90-day chat-retention TTL — a sweep nobody designed
+ * for them. A seller's carefully tuned persona silently disappearing 90 days
+ * after it was last written is a data-loss bug, not a retention policy.
+ *
+ * Left as-is deliberately, for now: changing `defaultTtl` on a live container
+ * does not retroactively resurrect swept documents, and giving these two types
+ * an explicit item-level `ttl: -1` is a product decision about whether
+ * personas are durable assets or ephemera. Both are now at least ERASABLE on
+ * request (see gdpr-erasure-service.ts's ERASABLE_DOCUMENT_TYPES), which is
+ * the Art. 17 half of the problem; this note records the Art. 5(1)(e) half so
+ * it is not rediscovered as a mystery.
  */
 const HISTORY_CONTAINER_DEFAULT_TTL = CHAT_HISTORY_TTL_SECONDS;
 
