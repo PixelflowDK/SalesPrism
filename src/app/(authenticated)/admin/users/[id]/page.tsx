@@ -81,6 +81,38 @@ export default async function EditUserPage(props: Props) {
           </Button>
         </div>
       </form>
+
+      {/*
+        GDPR Art. 15 / Art. 20 — SAD v2.7 Phase D, "On-request dataeksport".
+
+        Deliberately OUTSIDE the form above: this is a GET download, not a
+        mutation, and nesting it would make it submit the edit form. A plain
+        anchor rather than a fetch/Button-with-onClick keeps the whole thing a
+        server component — the browser handles the Content-Disposition
+        attachment natively, with no client JS and no copy of the subject's
+        personal data passing through React state.
+
+        Note for whoever adds the erasure control: the DELETE route
+        (`gdpr-erase`) already exists and works, but has no UI. It was left out
+        here on purpose — an irreversible cross-store delete needs a
+        confirmation flow, not a button next to a download link.
+      */}
+      <section className="mt-10 border-t border-border pt-6">
+        <h2 className="text-lg font-medium">Data protection</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Export everything the platform holds about this person, for a GDPR
+          Article 15 (access) or Article 20 (portability) request. Covers the
+          same stores as the erasure flow; anything that cannot be represented
+          as JSON is listed inside the file with the reason.
+        </p>
+        <div className="mt-4">
+          <Button variant="outline" asChild>
+            <a href={`/api/admin/users/${user.id}/gdpr-export`} download>
+              Download data export (JSON)
+            </a>
+          </Button>
+        </div>
+      </section>
     </div>
   );
 }
