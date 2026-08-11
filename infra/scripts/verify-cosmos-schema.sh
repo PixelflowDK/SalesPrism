@@ -183,9 +183,59 @@ if [[ -n "$WEBAPP_NAME" ]]; then
       fail "GET https://${hostname}/ returned HTTP $http_code (expected 200) — EnsureTenantTheme could not be exercised"
     else
       pass "GET https://${hostname}/ returned HTTP 200 (EnsureTenantTheme executed)"
-      echo "NOTE: this does not by itself prove the Cosmos write succeeded — check for absence of"
-      echo "      {\"code\":\"theme.get-failed\"...} / {\"code\":\"theme.seed-failed\"...} in:"
-      echo "      az webapp log download -g $RESOURCE_GROUP -n $WEBAPP_NAME --log-file <file>.zip"
+
+      # HTTP 200 alone is NOT proof the Cosmos write succeeded. During SR-009
+      # this endpoint returned 200 for weeks with no database at all: the theme
+      # lookup fails, `EnsureTenantTheme` logs `theme.get-failed`, and the page
+      # still renders with defaults. Asserting on the status code alone would
+      # therefore reproduce exactly the false-confidence that let SR-009 sit
+      # undetected. The only honest signal is the app's own structured error
+      # code, which SR-010 now ships to Application Insights.
+      #
+      # App Insights ingestion is not instant (typically 30-90s), so poll
+      # rather than sampling once — and treat "the query never returned data"
+      # as INCONCLUSIVE, never as a pass.
+      ai_name="appi-azurechat-${CUSTOMER_SLUG}"
+      app_id=$(az monitor app-insights component show -g "$RESOURCE_GROUP" -a "$ai_name" --query appId -o tsv 2>/dev/null) || true
+
+      if [[ -z "$app_id" ]]; then
+        echo "INCONCLUSIVE: no Application Insights component '${ai_name}' — cannot assert on theme errors."
+        echo "              Falling back to manual check:"
+        echo "              az webapp log download -g $RESOURCE_GROUP -n $WEBAPP_NAME --log-file <file>.zip"
+      else
+        # NEVER use `-o tsv` with `az monitor app-insights query`. It does not
+        # print the result row — for a `| count` query it prints the literal
+        # `1` (the number of result TABLES) no matter what the count is. An
+        # earlier revision of this block used it and reported
+        # "1 theme.get-failed event" against a val1 environment whose true
+        # count was 0, i.e. it would have hard-failed every provisioning run
+        # with a false "data plane is broken" verdict. Parse the JSON.
+        kql_scalar() {
+          az monitor app-insights query --app "$app_id" --analytics-query "$1" -o json 2>/dev/null \
+            | jq -r '.tables[0].rows[0][0] // empty'
+        }
+
+        theme_errors=""
+        confirmed_ingest=""
+        for _ in 1 2 3 4 5 6; do
+          sleep 20
+          # Any trace at all in the window proves the pipeline is delivering, so
+          # an empty theme-error result is meaningful rather than just silence.
+          confirmed_ingest=$(kql_scalar "traces | where timestamp > ago(10m) | count") || true
+          theme_errors=$(kql_scalar "traces | where timestamp > ago(10m) | where message has 'theme.get-failed' or message has 'theme.seed-failed' | count") || true
+          [[ -n "$confirmed_ingest" && "$confirmed_ingest" != "0" ]] && break
+        done
+
+        if [[ -z "$confirmed_ingest" || "$confirmed_ingest" == "0" ]]; then
+          echo "INCONCLUSIVE: no traces reached Application Insights within 2 minutes."
+          echo "              Cannot distinguish 'no theme errors' from 'telemetry not flowing'."
+          echo "              This is itself worth investigating (see SR-010)."
+        elif [[ "${theme_errors:-0}" != "0" ]]; then
+          fail "app logged ${theme_errors} theme.get-failed/theme.seed-failed event(s) — the managed identity cannot reach the Cosmos data plane through the private endpoint, even though the schema is correct"
+        else
+          pass "no theme.get-failed/theme.seed-failed in App Insights — managed identity reached the Cosmos data plane"
+        fi
+      fi
     fi
   fi
 fi
