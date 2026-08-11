@@ -58,3 +58,9 @@ src/.env.local
 infra/main.parameters.json
 *.bicepparam
 !infra/environments/example.bicepparam
+
+# Build/deploy artifacts produced by the zip-deploy flow (see the packaging
+# steps in .github/workflows/provision-customer.yml). Regenerated on every
+# deploy from src/.next/standalone — never source, and app.zip is 24MB.
+site-deploy/
+app.zip
