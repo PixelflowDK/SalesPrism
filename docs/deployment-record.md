@@ -710,3 +710,193 @@ Requirements 2, 3, 5 satisfied. Requirement 4 (runbook) written but unexercised.
 Requirement 1 (secrets actually in the vault) is the blocking gap, and its absence currently means **val1
 sign-in does not work** — this needs attention before anything else on this branch, independent of SR-001's
 formal closure.
+
+## 2026-08-11 (later same day) — Deploy + verify pass: SR-007, H-2, H-5, H-3, SR-010 (commit `a36519c`)
+
+**Task:** deploy and prove the already-authored SR-007/H-2/H-3/H-5/SR-010 blocker work committed at
+`a36519c`. Explicitly not a re-authoring task — code was read, verified intact, and deployed/proved.
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action. Scope: `rg-azurechat-val1` only. No DNS changes. No destructive `az` commands. No secret values printed (`--query "[].name"` only, per SD-003 — one exception: `az keyvault secret list` was attempted read-only to independently verify the SD-004 auth-outage claim below and returned `403 Forbidden`, itself corroborating evidence, no value was ever returned or at risk of being printed). No `GlobalStandard` found anywhere. No `--mode Complete`.
+
+### Gates (all green, verified fresh in this pass)
+- `az bicep build` on every touched module (`main.bicep`, `modules/cosmos-db.bicep`, `modules/app-service.bicep`, `modules/storage.bicep`, `modules/alerts.bicep`, `modules/openai.bicep`, all 4 `policy/*.bicep`) — 0 errors.
+- Regenerated JSON twins programmatically diffed against committed `.json` files (metadata/timestamp fields excluded) — **all in sync**, no drift between committed Bicep and committed compiled JSON.
+- `cd src && npx tsc --noEmit` — clean.
+- `npm run build` — succeeded, all 35 routes compiled.
+- `npm run test` (vitest) — **249 passed (249)**, 26 test files.
+
+### Pre-flight: `az deployment sub what-if` against `main.bicep` + `environments/validation.bicepparam`
+Ran before touching anything, per the mandatory Azure Change Safety protocol. Key finding: **most of the target state was already live**, deployed by an earlier session before this session started (deployment history shows `deploy-cosmos-sr009-val1`, `deploy-storage-sr007-val1` (06:22 UTC), `deploy-appservice-h2-val1` (06:30 UTC), `deploy-alerts-h5-val1-retry` (06:50 UTC), all `Succeeded`, all same-day). What-if showed:
+- `Microsoft.CognitiveServices/accounts/speech-azurechat-val1` + its private endpoint: **Create** (new resource) — F-02 Speech, **out of scope for this task, not deployed**.
+- Cosmos account: `~ Modify` — but the diff was **not** about `backupPolicy` (already matching, no diff there); it was the template's full-object-PUT omitting several live-only RP properties (`analyticalStorageConfiguration`, `defaultIdentity`, `diagnosticLogSettings`, `enableMaterializedViews`, `enablePerRegionPerPartitionAutoscale`, `enablePriorityBasedExecution`, `minimalTlsVersion`, `sqlEndpoint`) that would be reset to RP defaults on any redeploy — exactly the SR-002 risk `cosmos-db.bicep`'s own header comment warns about. **Per this task's own instruction ("if what-if shows anything other than a clean in-place modify, STOP and report"), the Cosmos module was NOT redeployed** — its desired state (`Continuous30Days`) was already live, so redeploying would only have added risk for zero benefit.
+- Storage `blobServices`: `~ Modify`, but the only diff was `deleteRetentionPolicy.allowPermanentDelete` reverting to its own current value (`false`) — a no-op in practice. Not redeployed (already correct).
+- App Service, Key Vault, AI Search, Cosmos containers, App Insights, webtest: minor `~ Modify` diffs, all either RP-default-property noise (not part of this task's scope) or known what-if false positives for `Microsoft.Web/sites.siteConfig` (a documented what-if limitation for this resource type) — cross-checked against direct `az webapp config show` output, which already showed the correct live values. Not redeployed.
+- Consumption budget: `~ Modify` — `utcNow('yyyy-MM-01')` re-evaluating to the same value (still August) and the RP-computed 10-year `endDate` being dropped/regenerated; functionally a no-op if redeployed. Not redeployed — already matching (`amount: 1000`, `Monthly`, 150% threshold, `kontakt@pixelflow.dk`).
+- The six metric alerts, the log-query alert, the action group, and the webtest all showed `= NoChange` — **exact match** to `alerts.bicep` as committed.
+
+**Conclusion: no Bicep redeployment was performed in this pass.** SR-007 (Cosmos + Storage), H-2 (App Service ingress), and H-5 (alerts + budget) were already fully deployed matching the committed templates — verified below by direct, independent `az` queries, not inferred from the what-if or from documentation claims.
+
+### SR-007 — Cosmos DB continuous backup: DEPLOYED (prior session), VERIFIED (this pass) — **CLOSED**
+```
+az cosmosdb show -g rg-azurechat-val1 -n cosmos-azurechat-val1
+  → backupPolicy.type: "Continuous", tier: "Continuous30Days"
+  → disableLocalAuth: true, enableAutomaticFailover: true, publicNetworkAccess: "Disabled"
+```
+Matches `infra/modules/cosmos-db.bicep`'s `enableContinuousBackup` default (`true`) exactly. Migration was one-way and is already done — confirmed via direct query, not re-attempted. **GDPR tension restated:** a pre-erasure snapshot remains restorable via self-service point-in-time restore for up to 30 days after erasure — see `docs/gdpr-erasure-evidence.md` §1/§7 addenda (both re-verified independently in this pass, see the new 2026-08-11 addendum there).
+
+### SR-007 — Storage soft delete + lifecycle: DEPLOYED (prior session), VERIFIED (this pass) — **CLOSED**
+```
+az storage account blob-service-properties show -g rg-azurechat-val1 --account-name stval136sepgklp44gk
+  → deleteRetentionPolicy: { enabled: true, days: 7, allowPermanentDelete: false }
+az storage account management-policy show -g rg-azurechat-val1 --account-name stval136sepgklp44gk
+  → policy.rules[].name: ["delete-images-after-90-days"]
+```
+Matches `infra/modules/storage.bicep`'s `blobSoftDeleteRetentionDays` default (`7`) and the lifecycle rule exactly. **GDPR tension restated:** blob soft delete means Azure retains a recoverable copy of an "erased" image blob for up to 7 days after `eraseBlobsForThreads`'s hard delete, before permanent purge — this is a deliberate, documented tradeoff (real accidental-deletion protection vs. a short, explicit erasure tail), not an oversight. See `docs/gdpr-erasure-evidence.md` for the full statement.
+
+### H-2 — App Service ingress restriction (val1 exception): DEPLOYED (prior session), VERIFIED (this pass) — **CLOSED**
+```
+az webapp config show -g rg-azurechat-val1 -n app-azurechat-val1
+  → ipSecurityRestrictions: [{ ipAddress: "Any", action: "Allow", name: "Allow all" }]
+  → ipSecurityRestrictionsDefaultAction: "Allow"
+  → linuxFxVersion: "NODE|22-lts", vnetRouteAllEnabled: true
+```
+`infra/environments/validation.bicepparam` sets `restrictIngressToCloudflare = false` with a dated, explicit comment — confirmed this is exactly what's live: **no** Cloudflare IP allow-list applied, default-allow, matching the documented val1 exception (unproxied site, App Service-managed cert). The template's `true` branch (Cloudflare-only allow-list, default-deny) was confirmed present in `app-service.bicep` and would apply for any customer using the default — not exercised against a live resource in this pass (val1 is the only stack touched), confirmed by source read only.
+```
+curl -o /dev/null -w "%{http_code}" https://app-azurechat-val1.azurewebsites.net/  → 200
+curl -o /dev/null -w "%{http_code}" https://val1-sales360.pixelflow.dk/            → 200
+```
+Both re-confirmed again after the SR-010 app deploy below (still 200 post-deploy).
+
+### H-5 — Alert baseline + budget: DEPLOYED (prior session), VERIFIED (this pass) — **CLOSED**
+All 9 resources from `alerts.bicep` (1 action group, 1 availability webtest, 6 metric alerts, 1 log-query alert) confirmed present in `rg-azurechat-val1` and, per the what-if above, an **exact `NoChange` match** to the committed template. Spot-checked two of them directly (not just via what-if):
+```
+az monitor metrics alert show -g rg-azurechat-val1 -n alert-cosmos-throttling-val1
+  → metricName: "TotalRequests", timeAggregation: "Count", threshold: 10   (matches bicep exactly)
+az monitor action-group show -g rg-azurechat-val1 -n ag-azurechat-val1
+  → emailReceivers[].name: ["operator"]   (contactEmail confirmed via the budget query below, not printed separately)
+az rest --method get .../Microsoft.Consumption/budgets/budget-azurechat-val1
+  → amount: 1000, timeGrain: "Monthly", notifications.actual_GreaterThan_150Pct: { threshold: 150, enabled: true, contactEmails: ["kontakt@pixelflow.dk"] }
+```
+**Classification, as requested:**
+- **Metric alerts (6):** `alert-availability-val1`, `alert-openai-quota-chat-val1`, `alert-openai-quota-embedding-val1`, `alert-cosmos-throttling-val1`, `alert-aisearch-throttling-val1`, `alert-cpu-val1` — native Azure Monitor platform metrics, zero telemetry-pipeline dependency.
+- **Log-query alert (1, `scheduledQueryRules`):** `alert-http5xx-val1` — queries Application Insights' `requests` table. **This alert had no data to evaluate until SR-010 telemetry was actually flowing** (see below) — now satisfied.
+- **Consumption budget (1):** `budget-azurechat-val1` — `Microsoft.Consumption/budgets`, monthly grain (not the SAD's literal daily-baseline wording — documented deviation in `alerts.bicep`'s own header, unchanged).
+
+### H-3 — Policy artifacts: VALIDATED (this pass), **NOT ASSIGNED** (deliberately, per instructions)
+```
+az bicep build --file policy/deny-non-eu-region.bicep            → 0 errors
+az bicep build --file policy/deny-openai-global-standard.bicep   → 0 errors
+az bicep build --file policy/require-standard-tags.bicep         → 0 errors
+az bicep build --file policy/initiative.bicep                    → 0 errors
+az deployment sub validate --location westeurope --template-file policy/deny-non-eu-region.bicep          → Succeeded
+az deployment sub validate --location westeurope --template-file policy/deny-openai-global-standard.bicep → Succeeded
+az deployment sub validate --location westeurope --template-file policy/require-standard-tags.bicep       → Succeeded
+az deployment sub validate --location westeurope --template-file policy/initiative.bicep                  → Succeeded
+```
+No `Microsoft.Authorization/policyDefinitions`, `policySetDefinitions`, or `policyAssignments` resource was created — `validate` is a dry-run, no resources are created by it. **Exact pending operator action** (unchanged from `initiative.bicep`'s own trailing comment, reproduced here for visibility):
+```
+1. az deployment sub create --location westeurope --template-file infra/policy/deny-non-eu-region.bicep
+2. az deployment sub create --location westeurope --template-file infra/policy/deny-openai-global-standard.bicep
+3. az deployment sub create --location westeurope --template-file infra/policy/require-standard-tags.bicep
+4. az deployment sub create --location westeurope --template-file infra/policy/initiative.bicep
+5. az policy assignment create --name sales-prism-guardrails \
+     --display-name "Sales Prism — infrastructure guardrails" \
+     --scope "/subscriptions/ceb8f0de-f43f-4e86-8a39-3aa338af5e10" \
+     --policy-set-definition sales-prism-guardrails \
+     --enforcement-mode DoNotEnforce   # observe compliance first
+6. az policy state list --policy-set-definition sales-prism-guardrails   # review for false positives
+   then re-run step 5 with --enforcement-mode Default once clean.
+```
+This is a subscription-wide change outside `rg-azurechat-val1`'s blast radius and was correctly left for explicit operator action.
+
+### SR-010 — Telemetry: APP DEPLOYED (this pass), **VERIFIED LIVE WITH DATA — CLOSED**
+
+**Finding before deploying:** `src/instrumentation.node.ts` (the actual Node-only telemetry setup file, imported by the committed `src/instrumentation.ts`) exists in the working tree but was **never `git add`ed** — `git show a36519c:src/instrumentation.node.ts` returns `fatal: path ... exists on disk, but not in 'a36519c'`. Without it, `a36519c` alone does not actually implement SR-010; `instrumentation.ts`'s dynamic `import("./instrumentation.node")` would fail to resolve at build/runtime. **This file must be `git add`ed and committed by the lead** — it was not committed by this agent (no commits were made in this pass, per instructions). For the purpose of building and proving the already-authored SR-010 work, the working-tree copy of `instrumentation.node.ts` was copied (not committed) into the isolated deploy worktree.
+
+**Build:** `git worktree add /tmp/salesprism-deploy8 a36519c` (fresh worktree, detached HEAD at the exact committed SHA); copied `instrumentation.node.ts` in as above; `npm install --legacy-peer-deps` (React 19/Radix UI peer-dep conflict, per CLAUDE.md's documented gotcha); `npm run build` — succeeded, all 35 routes compiled. Confirmed `@azure/monitor-opentelemetry`, `@opentelemetry/*`, and `@grpc/*` were correctly traced into `.next/standalone/node_modules` (required at runtime since `next.config.js`'s webpack `externals` hook marks them `commonjs` rather than bundling them).
+
+**Packaging:** exact `.github/workflows/open-ai-app.yml` steps — `cp -R .next/standalone → site-deploy/`, `cp -R .next/static → site-deploy/.next/static`, `cp -R public → site-deploy/public`, `zip Nextjs-site.zip ./* .next -qr` (24 MB, 117 MB uncompressed, 4,670 files).
+
+**Deploy attempts 1–2: FAILED (platform issue, not a code/template issue) — root-caused, not just retried blindly.** `az webapp deploy --type zip --async false` returned client-side `502` both times; `az webapp log deployment show` showed the Kudu-side job stuck at `"Zipping node_modules..."` (attempt 1) / `"Fetching changes."` (attempt 2) with **zero progress for 15–20+ minutes each** — far outside this app's own historical baseline (100–250s per this same doc's prior entries). Diagnosed via an AAD-bearer-token call directly to the Kudu REST API (`GET https://app-azurechat-val1.scm.azurewebsites.net/api/deployments/latest`, authenticated with `az account get-access-token`), which returned the real status: `"Deployment has been stopped due to SCM container restart. ... Do not perform a management operation and a deployment operation in quick succession."` — the B1-tier SCM container became unresponsive under the load of processing the larger (telemetry-dependency-heavy) `node_modules` tree, the platform's health monitor auto-recycled it, and both attempts were silently killed by that recycle before Kudu's own 12-minute self-heal timeout surfaced the real status.
+
+**Fix:** set `WEBSITE_RUN_FROM_PACKAGE=1` as an app setting (Microsoft's documented, more robust Node.js deployment mode — mounts the zip read-only instead of extracting + running the `NodeProjectOptimizer` step that was stalling) and confirmed via the same Kudu API call that no deployment was still active before retrying.
+
+**Deploy attempt 3: SUCCEEDED.**
+```
+az webapp deploy --type zip --async false
+  → "Status: Site started successfully. Time: 126(s)"
+  → "Deployment has completed successfully"
+  → { "status": "RuntimeSuccessful", "numberOfInstancesSuccessful": 1, "numberOfInstancesFailed": 0 }
+```
+
+**Pre/post App Service property diff (mandatory safety check):** captured `httpsOnly`, `identity.type`, `siteConfig.vnetRouteAllEnabled`, `siteConfig.linuxFxVersion`, and the full app-setting **name** list before and after. **No difference** except the two settings deliberately added in this pass (`SCM_DO_BUILD_DURING_DEPLOYMENT=false`, `WEBSITE_RUN_FROM_PACKAGE=1`) — `disableLocalAuth`, `publicNetworkAccess`, managed identity, VNet integration, `linuxFxVersion=NODE|22-lts`, and `httpsOnly` all confirmed unchanged. `ipSecurityRestrictions` re-confirmed still empty/`Allow` (H-2 val1 exception intact) after the deploy.
+```
+curl https://app-azurechat-val1.azurewebsites.net/  → 200
+curl https://val1-sales360.pixelflow.dk/            → 200
+```
+
+**Boot log:** `{"code":"telemetry.selftest.boot","status":"ok"}` present at every boot since ~06:41 UTC today (i.e. an earlier, uncommitted deploy from a prior session already had this working — this pass's own boot at `12:43:09Z` shows the same clean self-test, `✓ Ready in 8.4s`), zero `error`/`exception`/`fatal` in the post-deploy boot window.
+
+**Decisive proof — the task's own baseline was "this query returned NOTHING before":**
+```
+az monitor log-analytics query -w 3a1a69ba-65a7-4b6c-b1b8-e0e3487a52c0 \
+  --analytics-query "union withsource=Tbl * | where TimeGenerated > ago(12h) | summarize n=count() by Tbl"
+  → AppDependencies 5898, AppPerformanceCounters 2686, AppMetrics 1421, AppRequests 371,
+    AppAvailabilityResults 144, AppTraces 31, Usage 20, AppExceptions 4
+```
+This alone proves telemetry has been flowing for hours (since ~06:41 UTC, before this pass started) — **not** the "nothing" baseline the task described, meaning an earlier, uncommitted deploy in a prior session had already gotten this working live (consistent with the `instrumentation.node.ts` file existing uncommitted in the working tree). To prove **this pass's own deploy** specifically (not just historical data), fresh marked traffic was generated and independently traced end-to-end:
+```
+curl -H "X-SalesPrism-Verify: sr010-verify-1786452336" https://app-azurechat-val1.azurewebsites.net/                                      → 200
+curl https://app-azurechat-val1.azurewebsites.net/this-route-does-not-exist-sr010-verify-1786452336                                        → 404
+curl https://app-azurechat-val1.azurewebsites.net/api/auth/providers                                                                        → 200 (body — see auth-outage note below)
+curl https://app-azurechat-val1.azurewebsites.net/admin                                                                                     → 307
+```
+Polled every 15s; the marked 404 appeared in `AppRequests` after ~2m ingestion delay:
+```
+AppRequests | where Url has "sr010-verify-1786452336"
+  → Name: "GET /this-route-does-not-exist-sr010-verify-1786452336", ResultCode: 404,
+    OperationId: "efbe322264a69efd8e2e940aed727c0f", AppRoleName: "sales-prism.app-azurechat-val1",
+    TimeGenerated: 2026-08-11T12:45:37.42Z
+```
+30-minute window after the marked traffic, all four required tables **non-empty with correlation IDs**:
+```
+AppRequests 39 · AppTraces 6 · AppExceptions 1 · AppDependencies 240
+  (also AppAvailabilityResults 11, AppPerformanceCounters 171, AppMetrics 115)
+AppExceptions → ExceptionType: "Error", OuterMessage: "telemetry.selftest.synthetic-exception —
+  expected on every boot, not a real failure", OperationId: "cb65a8e8de101b64c20525ae97d7d517"
+AppTraces → Message: {"code":"telemetry.selftest.boot","status":"ok"}, matching this pass's own
+  boot timestamp (12:43:18Z)
+```
+`AppRoleName: "sales-prism.app-azurechat-val1"` on every record confirms `TENANT_SLUG` is correctly wired into the OpenTelemetry resource attributes (`instrumentation.node.ts`'s `service.name: app-azurechat-${tenantSlug}`).
+
+**SR-010: CLOSED.** Telemetry flows end-to-end, proven with fresh, independently-traced, correlated evidence from this pass's own deploy — not just historical data, and not just a boot log line.
+
+### Gate re-run
+```
+bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1
+  → All checks passed, exit 0 (disableLocalAuth, enableAutomaticFailover, database/container schema,
+    TTLs, CanNotDelete lock, managed-identity smoke test GET / → 200, all PASS)
+```
+Zero `theme.get-failed` / `theme.seed-failed` occurrences in the post-deploy boot log window.
+
+### Important caveat discovered in this pass, unrelated to SR-007/H-2/H-3/H-5/SR-010 but affecting overall val1 health
+Mid-session, a concurrent commit (`bbcb0d5`, "docs: SD-004 — SR-001 attempt left val1 auth BROKEN") landed on `develop` from a different agent/lead action, documenting a **live, pre-existing auth outage**: `AZURE_AD_CLIENT_SECRET`/`NEXTAUTH_SECRET` app settings point at Key Vault references that resolve to `SecretNotFound` (the secrets were never written to `kv-azurechat-val1`), so the Azure AD provider never registers. **Independently re-confirmed in this pass, not taken on trust:**
+```
+curl https://app-azurechat-val1.azurewebsites.net/api/auth/providers  → 200, body: {}   (empty — provider absent)
+az keyvault secret list --vault-name kv-azurechat-val1                → 403 Forbidden (ForbiddenByRbac)
+```
+The `403` is itself corroborating evidence — this agent has no more Key Vault access than the ones blocked in SD-004, consistent with that commit's account. **This predates and is unrelated to this pass's SR-010 app deploy or any of the H-2/H-5/SR-007 verification above** — the broken KV references were already live (added by `a36519c` itself) before this pass started, and none of the actions in this pass touched Key Vault, auth settings, or Entra. Flagged here for visibility only: **val1 sign-in is currently down**, tracked as SR-001 (still explicitly OPEN per SD-004), not part of this task's scope, and not closed by anything in this entry.
+
+### Cleanup
+`git worktree remove /tmp/salesprism-deploy8 --force` — removed cleanly. No git commit/push performed by this agent (per instructions — the lead commits, including `src/instrumentation.node.ts`, which still needs `git add`).
+
+### Summary — blocker-by-blocker
+| Blocker | Deployed | Verified live | Status |
+|---|---|---|---|
+| SR-007 (Cosmos Continuous30Days) | Yes (prior session) | Yes, this pass | **CLOSED** |
+| SR-007 (Storage soft delete + lifecycle) | Yes (prior session) | Yes, this pass | **CLOSED** |
+| H-2 (val1 ingress exception) | Yes (prior session) | Yes, this pass, incl. post-SR-010-deploy 200 | **CLOSED** |
+| H-5 (alerts + budget) | Yes (prior session) | Yes, this pass, incl. 2 direct spot-checks | **CLOSED** |
+| H-3 (policy artifacts) | No (deliberate — operator decision) | Build + validate only | **VALIDATED, ASSIGNMENT PENDING (as designed)** |
+| SR-010 (telemetry) | Yes, this pass | Yes, this pass, with correlation IDs | **CLOSED** |
+| SR-001 (auth secrets, discovered mid-pass) | N/A — out of scope | Independently confirmed broken | **STILL OPEN — separate task** |

@@ -361,6 +361,37 @@ See `docs/known-limitations.md` (SR-006) and `docs/deployment-record.md` for the
 - **[SUPERSEDED 2026-08-11 — SR-007, see below] Blob soft-delete/lifecycle** — currently **not applicable** on val1: soft delete and versioning are both disabled, so there is no soft-delete shadow window to await; and the 90-day lifecycle policy that would sweep un-erased images is in source code but **not yet deployed**.
 - **Azure OpenAI abuse-monitoring copy** — up to 30 days, entirely on Microsoft's side, outside this app's or this repo's control, and not disclosed as such anywhere the SAD's ZDR framing implies it is a solved/optional concern. This is the single largest undisclosed retention exposure found in this review. (Still true as of 2026-08-11 — see the SR-006 addendum in §6 above; this exposure was not addressed by SR-007 and remains open.)
 
+**Independent re-verification 2026-08-11 (deploy/verify pass, azure-infra-engineer, ~12:00–15:00 UTC):**
+performed as part of deploying the already-authored SR-007/H-2/H-5/SR-010 blocker work (commit
+`a36519c`). Re-ran the live queries fresh rather than trusting the addendum below:
+```
+az cosmosdb show -g rg-azurechat-val1 -n cosmos-azurechat-val1
+  → backupPolicy.type: "Continuous", continuousModeProperties.tier: "Continuous30Days"
+az storage account blob-service-properties show -g rg-azurechat-val1 --account-name stval136sepgklp44gk
+  → deleteRetentionPolicy: { enabled: true, days: 7, allowPermanentDelete: false }
+az storage account management-policy show -g rg-azurechat-val1 --account-name stval136sepgklp44gk
+  → policy.rules[].name: ["delete-images-after-90-days"]
+```
+Both confirmed **still** live and matching `infra/modules/cosmos-db.bicep` /
+`infra/modules/storage.bicep` exactly (`enableContinuousBackup` default `true`,
+`blobSoftDeleteRetentionDays` default `7`). No Bicep redeploy of the Cosmos or Storage modules was
+performed in this pass — a subscription-scoped `what-if` (`az deployment sub what-if` against
+`infra/main.bicep` + `environments/validation.bicepparam`) showed the Cosmos account resource would
+be a full-object PUT that also resets several **unrelated** live-only properties not declared in the
+template (`analyticalStorageConfiguration`, `defaultIdentity`, `diagnosticLogSettings`,
+`enableMaterializedViews`, `enablePerRegionPerPartitionAutoscale`, `enablePriorityBasedExecution`,
+`minimalTlsVersion`, `sqlEndpoint`) — per this repo's own SR-002 lesson embedded in
+`cosmos-db.bicep`'s header comment. Since the desired backup/soft-delete state was already live and
+correct, redeploying purely to "confirm" it would have been a net-negative action (real risk of
+resetting properties this task was not authorized to touch, for zero benefit). See
+`docs/deployment-record.md` (2026-08-11 addendum) for the full what-if trace and rationale.
+**Retention window stated plainly, once more, for this addendum's own record:** an image blob
+"deleted" by `eraseBlobsForThreads` remains recoverable by Azure for up to **7 days**
+(`blobSoftDeleteRetentionDays`) before permanent purge; a pre-erasure Cosmos snapshot remains
+restorable via self-service point-in-time restore for up to **30 days** (`Continuous30Days`). Both
+figures are unchanged from the 2026-08-11 addendum below — this entry only records that they were
+independently re-confirmed live, not re-derived or altered.
+
 **Addendum 2026-08-11 (SR-007) — both superseded rows above, corrected:**
 - **Cosmos backups:** `cosmos-azurechat-val1` was migrated live to Continuous30Days (see §1
   addendum above). A pre-erasure snapshot of a subject's data is now only recoverable via a
