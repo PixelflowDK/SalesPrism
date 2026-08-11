@@ -1,8 +1,8 @@
 {
-  "phase": "Autonomous product completion \u2014 Streams A (product UI) + B (SR-001/SR-010) running",
-  "lastCompletedTask": "Product UI layer W1-W8 committed (67c3700) \u2014 F-01/F-02/modules/documents now discoverable; 249 tests",
+  "phase": "Stage 7 \u2014 blockers mostly closed; BLOCKED on operator RBAC for SR-001 (val1 auth DOWN)",
+  "lastCompletedTask": "SR-006/SR-007/H-2/H-5/SR-010 closed with live evidence; instrumentation.node.ts committed",
   "branch": "develop",
-  "lastStableCommit": "bade667",
+  "lastStableCommit": "e532b22",
   "activeAgents": [
     "product-ui-worker (W1-W8)",
     "infra-worker (SR-001 + SR-010)"
@@ -22,19 +22,14 @@
   "nextAction": "Human interactive login needed to unblock the 10-item authenticated matrix (E2E_STORAGE_STATE). Meanwhile: finish SR-001/SR-010 and SR-006/007/H-2/H-3/H-5 streams, then review gauntlet + acceptance matrix.",
   "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
   "approxCreditNote": "7 sonnet worker runs + 1 haiku so far; Fable lead in delegation mode; codex review queued",
-  "updatedAt": "2026-08-11T09:00",
+  "updatedAt": "2026-08-11T15:00",
   "leadModel": "Opus (switched from Fable 5 for cost)",
   "openBlockers": [
-    "SR-001",
-    "SR-006",
-    "SR-007",
-    "SR-008",
-    "SR-010",
-    "H-2",
-    "H-3",
-    "H-5",
+    "SR-001 (OPEN \u2014 causing the outage)",
+    "SR-008 break-glass accounts",
+    "H-3 policy assignment (operator)",
     "task#30 provisioning gate",
-    "authenticated data-plane matrix",
+    "authenticated data-plane matrix (blocked by outage)",
     "review gauntlet",
     "acceptance matrix"
   ],
@@ -49,5 +44,21 @@
     "Sign-in click path -> Entra (automated, all 3 SW states)"
   ],
   "handoffDoc": "docs/session-handoff-current.md",
-  "CORRECTION_2026_08_11": "Earlier claims that canonical identity / isAdmin / /admin access were PROVEN are WITHDRAWN \u2014 they read a stale service-worker cache of /api/auth/session, not live responses. Authenticated data-plane matrix is BLOCKED-ON-SESSION and requires a human interactive login. Always verify from a cache-cleared context."
+  "CORRECTION_2026_08_11": "Earlier claims that canonical identity / isAdmin / /admin access were PROVEN are WITHDRAWN \u2014 they read a stale service-worker cache of /api/auth/session, not live responses. Authenticated data-plane matrix is BLOCKED-ON-SESSION and requires a human interactive login. Always verify from a cache-cleared context.",
+  "CRITICAL_OUTAGE": "val1 authentication is DOWN. AZURE_AD_CLIENT_SECRET + NEXTAUTH_SECRET are Key Vault references resolving to SecretNotFound (vault empty). /api/auth/providers returns {}. Needs operator RBAC grant (Key Vault Secrets Officer on kv-azurechat-val1) so secrets can be written, OR revert app settings + Bicep to literals.",
+  "ORPHANED_CREDENTIAL": "Entra credential val1-90d-20260811-kv-managed keyId c8e5c660-5b24-42cf-be7f-a89589e23723 is orphaned (value never captured) \u2014 needs operator deletion; classifier-blocked for the agent.",
+  "closedBlockers": [
+    "SR-002",
+    "SR-003",
+    "SR-004",
+    "SR-005",
+    "SR-006",
+    "SR-007",
+    "SR-009",
+    "H-2",
+    "H-5",
+    "SR-010",
+    "C-1",
+    "CR2-1/2/4/5"
+  ]
 }
