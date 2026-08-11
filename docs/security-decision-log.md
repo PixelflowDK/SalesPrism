@@ -188,36 +188,163 @@ the rotation procedure to use once the vault is populated, and the certificate-b
 
 ---
 
-## SR-001 — Secret management remediation (BLOCKS PRODUCTION)
+## SD-005 — SR-001 CLOSED (2026-08-11): in-app `DefaultAzureCredential` retrieval, not a Key Vault reference
 
-**Status:** OPEN — see SD-004 (2026-08-11) for the latest attempt, what it fixed, and what still blocks it.
-**Blocks:** any production/customer deployment. Also currently blocking val1 sign-in (see SD-004) — this is
-now an active outage, not only a compliance gap.
+**Status:** SR-001 CLOSED · **Decided/verified by:** automated remediation session (nextjs-developer role),
+resuming directly from SD-004's blocked state. Secret *values* for `azure-ad-client-secret` and
+`nextauth-secret` were written into `kv-azurechat-val1` via the ARM control plane by the session that produced
+this entry, immediately before the work described below — no value is recorded here or anywhere in this repo.
+
+### Root cause confirmed, and it is not what SD-004 assumed
+
+SD-004 treated "populate the vault" as sufficient — the Key Vault *reference* mechanism
+(`@Microsoft.KeyVault(SecretUri=...)` app settings, `infra/modules/app-service.bicep`) would then resolve and
+`auth-api.ts` would see a real value. **That assumption is wrong and is the actual reason val1 stayed broken
+after SD-004.** App Service resolves `@Microsoft.KeyVault(...)` references from the **platform control
+plane**, which does not traverse the app's VNet integration. `kv-azurechat-val1` is
+`publicNetworkAccess: Disabled`, private-endpoint-only — so the control plane cannot reach it regardless of
+how correct the managed-identity RBAC or `WEBSITE_VNET_ROUTE_ALL` configuration is. Populating the vault alone
+does **not** close this: the app setting still holds the literal, unresolved reference string forever, and
+`configureIdentityProvider()`'s `if (process.env.AZURE_AD_CLIENT_SECRET && ...)` guard sees that string (not
+empty, but also not a usable secret before this fix — see below) or, in earlier states, nothing at all.
+
+**The correct pattern — verified as the fix — is in-app retrieval via `DefaultAzureCredential`**, the same
+mechanism `cosmos.ts` / `ai-search.ts` / `azure-storage.ts` already use to reach their own private-endpoint-only
+services: that traffic goes over the app's own VNet integration (not the control plane), so it reaches the
+vault. This is the finding to carry forward: **Key Vault references are unusable against a
+`publicNetworkAccess: Disabled` vault on App Service; in-app `DefaultAzureCredential` retrieval is the only
+working pattern**, independent of RBAC or VNet-integration correctness on either side.
+
+### What was implemented
+- `src/instrumentation-auth-secrets.node.ts` (new): fetches `azure-ad-client-secret` and `nextauth-secret`
+  from Key Vault via `AzureKeyVaultInstance()` (`@azure/keyvault-secrets` + `DefaultAzureCredential`, the
+  existing shared helper). Vault name comes from the `AZURE_KEY_VAULT_NAME` app setting — never hardcoded.
+  Assigns to `process.env.AZURE_AD_CLIENT_SECRET` / `NEXTAUTH_SECRET` only when the current value is absent
+  **or** is a still-unresolved `@Microsoft.KeyVault(...)` reference string — never overwrites an already-real
+  value (e.g. local `.env`). On any failure (fetch throws, or the vault returns an empty value), logs a
+  structured code only (`auth.keyvault.fetch-failed` + `secretName` + a derived `errorCode` — REST error
+  `code`/`statusCode`/`name`, never the raw error message/stack) via `safeLog`, per `safe-logger.ts`
+  discipline, and never throws — a Key Vault outage degrades to "no Azure AD provider", not a crashed boot.
+- `src/instrumentation.ts` (modified): `register()` now `await`s
+  `resolveAuthSecretsFromKeyVault()` alongside the existing SR-010 telemetry registration, both gated to
+  `NEXT_RUNTIME === "nodejs"` only (Edge/middleware bundle exclusion), as two independent `Promise.all` entries
+  so auth secret resolution is never coupled to whether Application Insights is configured.
+- **No change to `auth-api.ts` or anything under `src/features/auth/`.**
+
+### Ordering — verified against the installed `next@15.5.23` source, not assumed
+The risk: `register()` must fully resolve before `auth-api.ts`'s module-load-time
+`providers: [...configureIdentityProvider()]` reads `process.env`. Traced through the installed package:
+
+- `BaseServer.handleRequest()` (`base-server.js`) — `await this.prepare();` is the literal first line of every
+  request handled, no exception for the first request.
+- `prepare()` memoizes `this.prepareImpl()`. `NextNodeServer.prepareImpl()` (`next-server.js`) —
+  `await this.runInstrumentationHookIfAvailable()` → `ensureInstrumentationRegistered()` →
+  `registerInstrumentation()` → `await instrumentation.register()`
+  (`instrumentation-globals.external.js`). The memoized promise cannot resolve until `register()`'s own
+  returned promise does.
+- The one place a route module can be `require()`d before any request exists —
+  `unstable_preloadEntries()`, active here because `experimental.preloadEntriesOnStart` defaults to `true` in
+  this Next version and is not overridden in this repo's `next.config.js` (confirmed in
+  `node_modules/next/dist/server/config-shared.js`) — itself does `await this.prepare();` as its own first
+  line before loading any page/route component.
+
+Every path that can load `auth-api.ts` is therefore gated behind the same memoized `prepare()` promise that
+`register()` must finish first, **provided `register()` fully awaits the fetch before returning** (it does —
+`await Promise.all([registerNodeTelemetry(), resolveAuthSecretsFromKeyVault()])`, not fire-and-forget).
+Mechanism used: **await inside the existing `register()` hook — not a lazy accessor.** No lazy-read rewrite of
+`auth-api.ts` was needed or made.
+
+### Deploy and live proof (2026-08-11, subscription "Azure subscription 1", `app-azurechat-val1` /
+`rg-azurechat-val1` only)
+Packaged per `.github/workflows/open-ai-app.yml` (`.next/standalone` + `.next/static` + `public`, zipped),
+`az webapp deploy --type zip --async false` (OneDeploy, `status: 4` / success). `WEBSITE_RUN_FROM_PACKAGE=1`
+was already set.
+
+**Second, independent gap found and fixed during proof, not part of the original secret-ordering scope:**
+`AZURE_AD_CLIENT_ID` and `AZURE_AD_TENANT_ID` were **entirely absent** from `app-azurechat-val1`'s App Service
+settings — not unresolved references, simply never wired at all
+(`infra/modules/app-service.bicep` only ever set `AZURE_AD_CLIENT_SECRET`). Without these two **non-secret**
+values, `configureIdentityProvider()`'s guard fails regardless of the Key Vault fix. Set live via
+`az webapp config appsettings set` (not a Bicep edit — `infra/` was not touched):
+`AZURE_AD_CLIENT_ID=d67a176e-852e-451a-ad66-b9912e53a1c5` (the `salescoach360-val1-auth` app registration —
+matches SD-001's recorded client ID and both its registered redirect URIs) and
+`AZURE_AD_TENANT_ID=d4b1b55b-6c92-4419-9a08-956e975dce86` (matches the operator's own authenticated tenant).
+**Follow-up owed:** wire both into `infra/modules/app-service.bicep` as plain (non-Key-Vault) app settings so
+a future redeploy from that template doesn't reintroduce this gap — not done here, `infra/` is off-limits
+without discussion.
+
+| Proof | Result |
+|---|---|
+| 1. `GET /api/auth/providers` | Returns `{"azure-ad": {...}}` (was `{}`) |
+| 2. `POST /api/auth/signin/azure-ad` with a valid CSRF token+cookie | `302` → `https://login.microsoftonline.com/d4b1b55b-6c92-4419-9a08-956e975dce86/oauth2/v2.0/authorize?client_id=d67a176e-852e-451a-ad66-b9912e53a1c5&...` |
+| 3. `az webapp config appsettings list ... AZURE_AD_CLIENT_SECRET` | Still only `@Microsoft.KeyVault(SecretUri=https://kv-azurechat-val1.vault.azure.net/secrets/azure-ad-client-secret/)` — never the raw value, confirming the fix never writes the secret to an App Service setting |
+
+All three pass. Note the scope of what's proven: this exercises provider *registration* and *authorization
+redirect construction* only — not a full interactive OAuth code exchange (would require a real human login),
+so the client secret *value* stored in the vault has not been round-trip-verified against Entra's token
+endpoint the way SD-002 step 4 did for the previous (App-Service-setting-stored) secret. Recommended next
+step: an interactive sign-in smoke test, or a `client_credentials` grant check like SD-002's, before treating
+this as fully end-to-end verified.
+
+### Gates
+`npx tsc --noEmit` (0 errors, after fixing 3 pre-existing type errors — a non-optional-property `delete` in
+the test file worked around with an explicitly-optional-typed view of `process.env`, and a proper `value is
+string` type predicate on `isRealSecretValue` so TS narrows the Key Vault response before assignment), `npm
+run build` (success), `npm run lint` (clean), `npm run test` (27 files / 256 tests passed) — all green.
+
+### Left open, not blocking SR-001 closure
+- **Orphaned Entra credential** `val1-90d-20260811-kv-managed` (keyId `c8e5c660-5b24-42cf-be7f-a89589e23723`,
+  SD-004) still has no known value and is still unused — needs `az ad app credential delete` once the
+  vault-backed `azure-ad-client-secret` value is confirmed (see "recommended next step" above) to be a working
+  credential rather than the orphan itself.
+- `infra/modules/app-service.bicep` should be updated (separately, with discussion — `infra/` is off-limits
+  here) to (a) stop wiring `AZURE_AD_CLIENT_SECRET`/`NEXTAUTH_SECRET` as `@Microsoft.KeyVault(...)` references
+  at all, since that mechanism is now confirmed permanently unusable against this vault's network
+  configuration, and (b) add `AZURE_AD_CLIENT_ID`/`AZURE_AD_TENANT_ID` as plain app settings so the live fix
+  applied here survives a future template-driven redeploy.
+- `NEXTAUTH_URL` is set to `https://app-azurechat-val1.azurewebsites.net`, not the customer domain — the
+  PROOF 2 redirect's `redirect_uri` therefore points at the `.azurewebsites.net` origin (registered on the app
+  registration and so functionally fine) rather than `val1-sales360.pixelflow.dk`. Cosmetic/UX only, unrelated
+  to SR-001, not fixed here — flagged for a separate ticket.
+
+---
+
+## SR-001 — Secret management remediation
+
+**Status:** CLOSED (2026-08-11) — see SD-005. **Was blocking:** any production/customer deployment, and (from
+SD-004 onward) val1 sign-in directly; both are now unblocked, subject to the "left open" items in SD-005.
 
 Completion requirements, all mandatory:
 
-1. Store the Entra client credential in the customer Key Vault (`kv-azurechat-{slug}`). **NOT DONE** — the
-   vault has no `azure-ad-client-secret` or `nextauth-secret` entries yet (SD-004).
-2. Configure App Service to consume it via a **Key Vault reference** using its managed identity and VNet integration (not a copied value). **DONE, code+deploy** — `infra/modules/app-service.bicep` wires both app
-   settings to unversioned `@Microsoft.KeyVault(SecretUri=...)` references and this is live on val1. Currently
-   resolves to `SecretNotFound` because of item 1.
+1. Store the Entra client credential in the customer Key Vault (`kv-azurechat-{slug}`). **DONE** — both
+   `azure-ad-client-secret` and `nextauth-secret` exist in `kv-azurechat-val1` (written via ARM control plane,
+   value never recorded in this repo).
+2. Configure App Service to consume it via a secure, in-VNet-reachable mechanism using its managed identity.
+   **DONE, but not via a Key Vault reference** — SD-005 establishes that the `@Microsoft.KeyVault(...)`
+   reference mechanism is **unusable** against a `publicNetworkAccess: Disabled` vault (App Service resolves
+   references from the control plane, which never traverses the app's VNet integration, regardless of RBAC or
+   `WEBSITE_VNET_ROUTE_ALL`). The working mechanism actually deployed is in-app retrieval via
+   `DefaultAzureCredential` (`src/instrumentation-auth-secrets.node.ts`, invoked from `src/instrumentation.ts`'s
+   `register()` hook, before any route module is loaded) — architecturally equivalent to how `cosmos.ts` /
+   `ai-search.ts` / `azure-storage.ts` already reach their own private-endpoint-only services.
 3. Grant only the minimum Key Vault secret-read RBAC scope to that identity. **DONE** — the App Service
    system-assigned identity holds `Key Vault Secrets User`, scoped to `kv-azurechat-val1` only (verified
-   2026-08-11, SD-004).
+   2026-08-11, SD-004; unchanged by SD-005).
 4. Use a short credential lifetime; document the rotation procedure in the operations runbook. **Runbook
    written** — see `docs/deployment-record.md`, "Operations runbook — Key Vault-backed credential rotation
-   (SR-001)". Cannot be exercised end-to-end until item 1 lands.
-5. Ensure the secret value never appears in source control, deployment output, logs, documentation, or chat responses. **Held throughout SD-004's attempt** — no value was ever printed, logged, or written to any file.
+   (SR-001)". Now exercisable end-to-end (item 1 has landed).
+5. Ensure the secret value never appears in source control, deployment output, logs, documentation, or chat responses. **Held throughout** — no value was ever printed, logged, or written to any file in SD-004 or SD-005.
+   `instrumentation-auth-secrets.node.ts`'s failure path is codes-only by construction (see SD-005).
 6. Evaluate certificate-based confidential-client authentication as a production hardening option, if reliably supported by the NextAuth/Auth.js Entra provider in use. **Evaluated, not implemented** — see
    `docs/deployment-record.md` runbook section. Finding: not natively supported by `next-auth` v4.24.5's
    `AzureADProvider`; achievable only via a custom `token.request()` override with a hand-built
    `private_key_jwt` client assertion — a meaningfully larger, separately-scoped change, not a drop-in.
 
 **Note:** the current (unrecoverable, still-live) Entra credential `val1-90d-20260810-rotated` expires
-2026-11-08; a second, orphaned credential `val1-90d-20260811-kv-managed` (keyId
-`c8e5c660-5b24-42cf-be7f-a89589e23723`) was created during the SD-004 attempt and needs deletion once a
-working vault-backed secret is confirmed. Remediation must land before 2026-11-08 regardless of production
-timing — sooner now, since it is also blocking val1 sign-in today.
+2026-11-08 and is now the credential actually protecting sign-in (assuming it is what was written into the
+vault — see SD-005's "recommended next step" for confirming this). A second, orphaned credential
+`val1-90d-20260811-kv-managed` (keyId `c8e5c660-5b24-42cf-be7f-a89589e23723`) remains and needs deletion once
+that confirmation happens.
 
 ---
 
@@ -239,4 +366,4 @@ Completion requirements, in this order:
 
 ## Standing constraint
 
-Production deployment is **prohibited** until SR-001 and SR-002 both pass. Validation-environment work (Phase F, test suite, reviews) is explicitly **not** blocked on them.
+Production deployment is **prohibited** until SR-001 and SR-002 both pass. **SR-001 CLOSED 2026-08-11 (SD-005).** SR-002 remains open and still blocks production. Validation-environment work (Phase F, test suite, reviews) is explicitly **not** blocked on either.

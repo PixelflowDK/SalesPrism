@@ -49,6 +49,8 @@ export type SafeLogFields = Partial<{
   deploymentUsed: string;
   /** Total tokens (prompt + completion) reported by the Vercel AI SDK's `onFinish` usage — a count, never token content. */
   tokensUsed: number;
+  /** Key Vault secret name being read (a static, developer-defined identifier — e.g. "azure-ad-client-secret" — never the secret value). */
+  secretName: string;
 }>;
 
 const SAFE_FIELD_KEYS: Array<keyof SafeLogFields> = [
@@ -64,6 +66,7 @@ const SAFE_FIELD_KEYS: Array<keyof SafeLogFields> = [
   "complexity",
   "deploymentUsed",
   "tokensUsed",
+  "secretName",
 ];
 
 const sanitizeFields = (fields?: SafeLogFields): Record<string, unknown> => {

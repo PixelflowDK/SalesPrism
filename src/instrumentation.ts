@@ -23,10 +23,24 @@
  * rationale (SAD §31.3), the boot self-test, and the incident this exact
  * two-file split fixes (an earlier single-file version broke every
  * authenticated route on val1 — docs/deployment-record.md, SR-010 section).
+ *
+ * SR-001/SD-004 — this hook is also where `AZURE_AD_CLIENT_SECRET` /
+ * `NEXTAUTH_SECRET` get populated from Key Vault via
+ * `resolveAuthSecretsFromKeyVault()` (src/instrumentation-auth-secrets.node.ts —
+ * see that file for the full outage/root-cause writeup and the proof that
+ * awaiting it here, before `register()` returns, is what guarantees it
+ * completes before `auth-api.ts` reads `process.env`). Deliberately a
+ * second, independent `await` — not folded into `registerNodeTelemetry()` —
+ * so auth secret resolution never depends on Application Insights being
+ * configured. Same Node.js-runtime-only dynamic-import idiom as the
+ * telemetry import, for the same Edge-bundle-exclusion reason.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { registerNodeTelemetry } = await import("./instrumentation.node");
-    await registerNodeTelemetry();
+    const [{ registerNodeTelemetry }, { resolveAuthSecretsFromKeyVault }] = await Promise.all([
+      import("./instrumentation.node"),
+      import("./instrumentation-auth-secrets.node"),
+    ]);
+    await Promise.all([registerNodeTelemetry(), resolveAuthSecretsFromKeyVault()]);
   }
 }

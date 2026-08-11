@@ -43,6 +43,7 @@ describe("safeLog redaction contract", () => {
       complexity: "low",
       deploymentUsed: "gpt-5.4-mini",
       tokensUsed: 123,
+      secretName: "azure-ad-client-secret",
     });
     const payload = lastLoggedPayload(infoSpy);
     expect(payload).toMatchObject({
@@ -58,6 +59,7 @@ describe("safeLog redaction contract", () => {
       complexity: "low",
       deploymentUsed: "gpt-5.4-mini",
       tokensUsed: 123,
+      secretName: "azure-ad-client-secret",
     });
   });
 
