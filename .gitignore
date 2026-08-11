@@ -8,6 +8,12 @@
 # testing
 **/coverage
 
+# Playwright E2E (src/e2e/, src/playwright.config.ts) — local run artifacts
+src/test-results/
+src/playwright-report/
+src/blob-report/
+src/playwright/.cache/
+
 # next.js
 **/.next/
 **/out/

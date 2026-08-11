@@ -277,6 +277,45 @@ All other `process.env.*` references across `app/` and `features/` were grepped 
 
 **Outstanding — explicitly not proven by this deploy:** discriminators (a) and (b) confirm the new code is live and behaving correctly at the protocol level (correct authorize request, working CSRF self-heal). **They do not prove that an actual interactive Entra login now succeeds and creates a valid session** — that requires a human operator to complete the real Microsoft login (credentials, possibly MFA) in a browser and observe a working authenticated session. That walkthrough is still outstanding and must be performed by a human, not this agent.
 
+## 2026-08-11 — val1 redeploy from commit `a9eead3` (fix: await redirect helpers — the login-page-after-successful-Entra-auth defect)
+
+**Reason:** `a9eead3` fixes the root cause of the val1 login defect: `redirectIfAuthenticated()` called `RedirectToPage("chat")` without `await`. `RedirectToPage` is async (Next.js 15 requires every export of a `"use server"` module to be async) and Next's `redirect()` works by THROWING `NEXT_REDIRECT`; un-awaited, that throw landed in a floating promise, was swallowed as an unhandled rejection, and `redirectIfAuthenticated()` returned normally — so `app/page.tsx` went on to render the login page to an already-authenticated user. Entra sign-in succeeded, the session cookie was set, and the user still saw the login screen. The fix awaits the three server-side redirect call sites where a swallowed redirect changes behavior: `redirectIfAuthenticated` (the login bug), `DeleteChatThreadByID`, `CreateChatAndRedirect`.
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Scope:** touched only `app-azurechat-val1` in `rg-azurechat-val1` (deploy + restart). No DNS changes. No destructive `az` commands. No app settings read or modified. No secret values printed anywhere — app-setting queries (none were needed for this deploy) would have used `--query "[].name"` per the standing rule.
+
+**Build source:** committed HEAD `a9eead3` ("fix(auth): await redirect helpers — un-awaited NEXT_REDIRECT was swallowed"), built from a fresh isolated worktree `git worktree add /tmp/salesprism-deploy6 a9eead3` (main tree, which was on the same commit, left untouched). Node 22 LTS (`nvm use 22`, confirmed `v22.23.2`), `npm ci --legacy-peer-deps` (1023 packages, no install errors), `npm run build` — succeeded cleanly, all routes compiled, `tsc`/type-check clean, no build errors.
+
+**Packaging:** exact pattern from `.github/workflows/open-ai-app.yml` (`output: "standalone"`):
+- `cp -R .next/standalone → site-deploy/`
+- `cp -R .next/static → site-deploy/.next/static`
+- `cp -R public → site-deploy/public`
+- `zip Nextjs-site.zip ./* .next -qr` (22.3 MB)
+- Verified via `unzip -l` that the freshly built `public/sw.js` (14,680 bytes, timestamped to this build) was present in the zip at `public/sw.js`.
+
+**Deploy result:** `az webapp deploy -g rg-azurechat-val1 -n app-azurechat-val1 --src-path .../Nextjs-site.zip --type zip --async false` ran to completion: `"Status: Site started successfully. Time: 236(s)"`, `"Deployment has completed successfully"`. Deployment status object: `"status": "RuntimeSuccessful"`, `numberOfInstancesSuccessful: 1`, `numberOfInstancesFailed: 0`.
+
+**Restart + poll:** `az webapp restart`, then polled `https://val1-sales360.pixelflow.dk/` — first check after restart already returned `200`.
+
+**Three-state Playwright regression suite** (`E2E_BASE_URL=https://val1-sales360.pixelflow.dk npx playwright test e2e/auth-signin-click.spec.ts`, proves the SW-caching CSRF fix from `dc9eb8e` has not regressed): first parallel run (3 workers, right after restart) showed 2–3 failures on `page.waitForURL`/`navigator.serviceWorker.ready` timeouts; diagnosed as this sandbox's CPU contention from running 3 concurrent Chromium instances immediately after a cold restart, not an app defect — confirmed via isolated standalone Playwright scripts run outside the test framework showing (1) the service worker registers and `navigator.serviceWorker.ready` resolves in well under a second, and (2) the "Microsoft 365" button click completes the full flow (CSRF fetch → `POST /api/auth/signin/azure-ad` → navigation to `login.microsoftonline.com` with correct tenant/client_id/redirect_uri) end-to-end. Re-run serially (`--workers=1`): **3 passed, 0 failed.**
+
+**New regression test — proves the fix mechanism directly (not just the symptom):** added `src/features/auth-page/helpers.redirect.test.ts` (vitest, hermetic unit test, no browser/DOM). Mocks `next-auth`'s `getServerSession` (to control the session shape, same pattern as the existing `helpers.test.ts`) and `../common/navigation-helpers`'s `RedirectToPage` to return a promise that **rejects** with a `NEXT_REDIRECT`-like sentinel — mirroring what Next's real `redirect()` throws. Asserts `redirectIfAuthenticated()` itself **rejects with that sentinel** when a session exists. Under the pre-fix code (`RedirectToPage("chat");`, no `await`), that rejection would float and `redirectIfAuthenticated()` would resolve `undefined` instead of rejecting — the assertion would fail, exactly reproducing the regression. Under the fix (`await RedirectToPage("chat")`), the rejection propagates and the assertion passes. A second test asserts the unauthenticated path still resolves normally without calling `RedirectToPage`.
+
+**Full vitest suite:** `npx vitest run` → **240 passed (240)**, up from the prior 238 baseline by exactly the 2 new tests added; zero failures, zero regressions.
+
+**Gates:**
+- `bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1` → all checks passed, exit 0 (schema, TTLs, partition keys, `CanNotDelete` lock, managed-identity smoke test all as in prior entries).
+- `npx tsc --noEmit` → clean, both in the deploy worktree (commit `a9eead3` exactly) and in the main working tree (which additionally includes the new, uncommitted test file).
+- `npm run lint` → clean (`No ESLint warnings or errors`), both locations.
+- `npm run build` → succeeded in the deploy worktree during packaging (see above).
+
+**Cleanup:** `git worktree remove /tmp/salesprism-deploy6 --force` — removed cleanly; main working tree untouched except the new test file (which is uncommitted, per instructions — no git commit/push performed by this agent).
+
+**Bonus, unplanned observation (not a substitute for the required human walkthrough below):** while investigating the Playwright flakiness, the sandboxed browser preview pane used for debugging turned out to already be carrying a valid, non-expired NextAuth session cookie for `val1-sales360.pixelflow.dk` (not created by this agent — no credentials were entered, no login flow was driven; its origin is unknown, most likely left over from earlier human/agent activity in this same environment). Passively navigating that already-authenticated tab to `/` produced a genuine server-level redirect to `/chat` (confirmed in the network log: `GET / → 200` immediately followed by `GET /chat → 200`, then the full authenticated app shell rendered) — i.e., with a real, valid session present, the fixed `redirectIfAuthenticated()` mechanism does navigate away from the login page in production, live. This is real corroborating evidence, but it is **not** a witnessed interactive Entra login performed by a human in this task, and does not replace the walkthrough below.
+
+**Outstanding — still explicitly unproven:** no interactive Entra login (credentials + possibly MFA, in a fresh/unauthenticated browser) was performed by this agent for this deploy. **A human operator must still complete a real Microsoft login against `https://val1-sales360.pixelflow.dk` in a fresh browser session and confirm they land on `/chat`, not the login page**, to fully close out this defect end-to-end.
+
 ## 2026-08-11 — val1 redeploy from commit `dc9eb8e` (PWA: blanket `/api/*` NetworkOnly — fixes stuck "Microsoft 365" button)
 
 **Reason:** live defect — clicking "Microsoft 365" showed a loading spinner and never navigated to Entra. Root cause: `@ducanh2912/next-pwa`'s `defaultCache` put `GET /api/auth/csrf` into a 24h `NetworkFirst` cache named `apis`; `signIn()` replayed a stale CSRF token, the downstream POST failed CSRF validation, and `signIn()` resolved with no redirect URL. `dc9eb8e` replaces the previous `/api/chat` + `/api/speech` allow-list with one blanket `NetworkOnly` rule for every same-origin `/api/*` (GET and POST), registered before the library's default `apis` rule, and enables `cleanupOutdatedCaches`.
