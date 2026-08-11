@@ -600,3 +600,113 @@ Touched only `app-azurechat-val1` (deploy + restart). No `infra/` edits. No DNS 
 Product UI layer for W1–W8 is live on val1 and confirmed via the positive route discriminator. The authenticated data-plane matrix could not be exercised live — no session, and none was fabricated. A dedicated Entra ID test-user account (or a non-production `CredentialsProvider` escape hatch) remains the same unaddressed gap `e2e/authenticated-journeys.spec.ts` has flagged since before this task; until it exists, matrix items 1–7 and 10 cannot be verified end-to-end by automation.
 
 **Outstanding:** none identified for this specific defect — all three Playwright contexts passed on the live deployment, including the decisive primed-cache regression case, and the fix is confirmed live via byte-identical `sw.js` and correct Workbox rule ordering. As before, a full interactive Entra login (real credentials, possibly MFA) has still not been performed by this agent — out of scope by design (no test credentials exist; see `e2e/authenticated-journeys.spec.ts`) — so session creation past the Entra authorize redirect remains unverified by automation.
+
+---
+
+## 2026-08-11 — SR-001 attempt: Key Vault reference confirmed live, secrets never populated — val1 sign-in currently broken
+
+Full incident detail, what was tried, and why it stalled: `docs/security-decision-log.md` SD-004. Summary
+here for the deployment record, plus the two things SR-001 requires that live in this file: the rotation
+runbook (requirement 4) and the certificate-auth evaluation (requirement 6).
+
+### What is live right now
+`app-azurechat-val1`'s `AZURE_AD_CLIENT_SECRET` and `NEXTAUTH_SECRET` app settings are Key Vault references
+(from `infra/modules/app-service.bicep`, deployed by a concurrent session on commit `a36519c`):
+
+```
+AZURE_AD_CLIENT_SECRET = @Microsoft.KeyVault(SecretUri=https://kv-azurechat-val1.vault.azure.net/secrets/azure-ad-client-secret/)
+NEXTAUTH_SECRET        = @Microsoft.KeyVault(SecretUri=https://kv-azurechat-val1.vault.azure.net/secrets/nextauth-secret/)
+```
+
+(Both are pointer strings, not secrets — safe to record verbatim, and this is the proof-of-reference the
+closure checklist asks for.) Neither underlying secret exists in `kv-azurechat-val1` yet, so both resolve to
+`SecretNotFound` (`az rest` against `.../config/configreferences/appsettings`). Live consequence, verified
+2026-08-11: `GET /api/auth/providers` → `{}`; `POST /api/auth/signin/azure-ad` → 302 to
+`/api/auth/signin?csrf=true` (NextAuth's own error page) instead of `login.microsoftonline.com`. **Sign-in on
+val1 does not work right now.** This is a live regression, not a pre-existing gap — it was introduced by the
+app-settings change landing before the vault was populated, and needs the same-day fix described in SD-004's
+"what actually closes this" list.
+
+### Operations runbook — Key Vault-backed credential rotation (SR-001)
+
+Applies once `azure-ad-client-secret` and `nextauth-secret` exist in `kv-azurechat-val1` (see SD-004 for the
+one-time bootstrap this runbook assumes is already done).
+
+**Prerequisites for whoever runs this:** `Key Vault Secrets Officer` (or `Administrator`) RBAC scoped to
+`kv-azurechat-val1`, plus either a presence inside `vnet-azurechat-val1` or an explicitly human-approved,
+time-boxed public-network exception on the vault (see SD-004 for the exact `az keyvault update` /
+`az keyvault network-rule add` / `az keyvault network-rule remove` sequence used, and the mandatory
+re-verification that `publicNetworkAccess` is set back to `Disabled` afterward).
+
+**Rotating `azure-ad-client-secret` (the Entra client credential):**
+1. Add a **new** client secret credential to the `salescoach360-val1-auth` app registration
+   (`d67a176e-852e-451a-ad66-b9912e53a1c5`) without deleting the old one — e.g.
+   `az rest --method POST --uri "https://graph.microsoft.com/v1.0/applications/<app-object-id>/addPassword" --body '{"passwordCredential":{"displayName":"val1-90d-<date>","endDateTime":"<+90d>"}}' --query secretText -o tsv`
+   captured straight into a shell variable, **never echoed**, 90-day max expiry (SD-002 policy).
+2. `az keyvault secret set --vault-name kv-azurechat-val1 --name azure-ad-client-secret --value "$NEW_SECRET"`
+   — value piped from the variable, never printed; `--query "id"` only (a version URI, not a secret) if you
+   want confirmation output.
+3. The app setting uses the **unversioned** `SecretUri` form deliberately (no `/<version>` segment) so App
+   Service picks up the new version on its own periodic reference refresh — no redeploy needed. To force
+   immediate pickup, restart `app-azurechat-val1`.
+4. Verify: `az rest --method get --url "https://management.azure.com/<app-resource-id>/config/configreferences/appsettings?api-version=2022-03-01"`
+   shows `status: "Resolved"` with a new `activeVersion`; re-run the CSRF-token + `POST
+   /api/auth/signin/azure-ad` check and confirm the 302 to `login.microsoftonline.com/d4b1b55b-.../`.
+5. **Only after step 4 passes**, delete the superseded Entra credential (verify-before-remove — SD-002/SD-003
+   precedent). Confirm via `az ad app credential list` (metadata only) that exactly one credential remains.
+6. Record the new credential's `displayName`/`keyId`/expiry (metadata only, never the value) in
+   `docs/security-decision-log.md`.
+
+**Rotating `nextauth-secret`:**
+1. Generate a new value locally: `openssl rand -base64 32` — capture into a shell variable, never echoed.
+2. `az keyvault secret set --vault-name kv-azurechat-val1 --name nextauth-secret --value "$NEW_NEXTAUTH" --query "id" -o tsv`.
+3. **Restart `app-azurechat-val1`.** Unlike the Entra secret, `NEXTAUTH_SECRET` is read once at Node process
+   start and held in memory — the platform's periodic reference refresh alone does not make a running process
+   pick up the new value; a restart is required for this one.
+4. Rotating this invalidates all existing sessions — expected and harmless; users simply sign in again.
+
+**Suggested cadence:** 90 days for `azure-ad-client-secret`, matching the existing SD-002/SD-003 policy for
+this credential. `nextauth-secret` has no external expiry; rotate on the same cadence for hygiene, or
+immediately on any suspected exposure (same trigger as SD-003).
+
+### Certificate-based confidential-client authentication — evaluation (SR-001 requirement 6, evaluated, not implemented)
+
+`src/package.json` pins `"next-auth": "^4.24.5"` — legacy NextAuth v4, not Auth.js v5. Findings:
+
+- `next-auth/providers/azure-ad`'s `AzureADProvider` factory exposes only a plain `clientSecret: string` field
+  and assumes `client_secret_post`/`client_secret_basic` token-endpoint authentication. Its `OAuthConfig`
+  surface has no built-in option for `private_key_jwt` (certificate-based) client assertion.
+- It is *technically* reachable by overriding the provider's `token.request()` async callback (supported
+  since next-auth ~4.20) to hand-construct and sign an RS256 JWT client assertion — using the certificate's
+  private key and the `kid` Entra assigns to the registered certificate — and POST it as
+  `client_assertion`/`client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`, instead of
+  letting the library do its normal secret-based exchange.
+- That is custom, non-standard code living inside `src/features/auth-page/auth-api.ts`, directly adjacent to
+  `src/features/auth/` (off-limits per `CLAUDE.md` without explicit approval), and materially larger than a
+  config toggle: it needs a JWT-signing dependency, certificate lifecycle management (the private key itself
+  would need to live in Key Vault too — same problem class as this SR, for a different secret type), and new
+  test coverage for the token-exchange path.
+- **Recommendation:** legitimate production-hardening target, but scope it as its own follow-up (its own
+  SR/ADR) rather than folding it into SR-001 closure. The Key Vault-reference fix in this task is the correct
+  near-term remediation regardless of whether certificate auth is adopted later — a future MSAL-based
+  certificate flow would still want the private key held in Key Vault, so this work is not wasted either way.
+
+### Gates
+Not closed. `az webapp config appsettings list ... --query "[?name=='AZURE_AD_CLIENT_SECRET'].value"` returns
+the reference string (recorded above) — proof of item 2. Resolution status is `SecretNotFound`, not
+`Resolved` — item 1 is what's missing. `POST /api/auth/signin/azure-ad` does **not** currently redirect to
+`login.microsoftonline.com` — auth is broken, not merely undocumented.
+
+### Scope discipline
+Touched only `kv-azurechat-val1` (network config, opened and reverted twice, confirmed reverted both times)
+and read-only queries against `app-azurechat-val1`. No `infra/` edits. No app deployment or restart performed.
+No DNS changes. Two Azure actions were attempted and blocked by the session's own permission classifier
+(temporary RBAC grant; deletion of an orphaned credential) rather than worked around. No secret value was
+ever printed, logged, or written to a file — every value that had to move went shell-variable → `az`,
+unechoed, per the SD-003 lesson. No git commit/push performed — lead commits.
+
+### Result: STILL OPEN — see SD-004 for full detail and the exact next steps
+Requirements 2, 3, 5 satisfied. Requirement 4 (runbook) written but unexercised. Requirement 6 evaluated.
+Requirement 1 (secrets actually in the vault) is the blocking gap, and its absence currently means **val1
+sign-in does not work** — this needs attention before anything else on this branch, independent of SR-001's
+formal closure.
