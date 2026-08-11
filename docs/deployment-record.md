@@ -507,6 +507,45 @@ New files only: `infra/policy/deny-non-eu-region.bicep`, `.json`, `infra/policy/
 ### Result: CLOSED (as "authored, validated, documented — not assigned", matching the task's explicit boundary)
 The three policy definitions + initiative genuinely compile and validate against this subscription, using a real (looked-up, not guessed) Policy alias for the GlobalStandard check, and don't retroactively flag anything already deployed. SAD §16.2 corrected to state plainly that enforcement is not yet active until an operator assigns these. **Remains for the operator (Kristjan):** run the documented `az deployment sub create` ×4 + `az policy assignment create` sequence (ideally `DoNotEnforce` first) to make SAD §16.2's "hård gardering" claim actually true; separately, consider a follow-up policy for public-network-access-on-AI-services (SAD §16.2 also claims this but it was out of this task's three-definition scope — tracked in `docs/known-limitations.md`).
 
+---
+
+## 2026-08-11 — H-5 closed: SAD §31.2 alert rules implemented and deployed to val1 (new `infra/modules/alerts.bicep`)
+
+**Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) before any action.
+
+**Coordination check performed first:** re-read `infra/modules/observability.bicep` and `infra/modules/key-vault.bicep` before touching anything — both unmodified in the working tree (`git status --porcelain infra/` showed no changes to either), confirming no conflict with the parallel Key Vault/telemetry agent's work at the time of this session. Created a new, separate `infra/modules/alerts.bicep` module rather than editing `observability.bicep`, so this work cannot collide with that agent's in-progress changes there.
+
+**Metric/dimension verification performed before writing any alert rule** (not assumed): `az monitor metrics list-definitions` run live against `app-azurechat-val1`, `plan-azurechat-val1`, `cosmos-azurechat-val1`, `oai-azurechat-val1`, and `srch-azurechat-val1`, plus `appi-azurechat-val1` for the availability metric, and `az provider show -n microsoft.insights` for the webtests resource type/API version. Confirmed real metric names, namespaces, and dimensions for every metric-based alert before using them.
+
+**SR-010 dependency check performed and reported honestly:** `git status --porcelain src/instrumentation.ts` confirmed the file (Azure Monitor OpenTelemetry Distro wiring — the parallel agent's SR-010 remediation) exists in the working tree but is **uncommitted** as of this session — meaning it was not part of any build ever deployed to val1's App Service. The HTTP 5xx% alert (a log-query alert against Application Insights' `requests` table) therefore has no real data to evaluate yet; this is stated explicitly in the alert's own `description` property, in SAD §31.2, and in `docs/known-limitations.md` — not glossed over.
+
+**Implemented, one per SAD §31.2 row, each in its verified-correct native form** (new file `infra/modules/alerts.bicep`, plus small additive output-only changes to `infra/modules/openai.bicep` (`chatModelCapacity` output) and `infra/modules/app-service.bicep` (`appServicePlanId` output) — neither changes any deployed resource property, both are pure Bicep outputs):
+1. **App Service availability < 99%/5min** — `Microsoft.Insights/webtests` (ping test, 2 EU locations: Amsterdam `emea-nl-ams-azr`, Dublin `emea-gb-db3-azr`) + `Microsoft.Insights/metricAlerts` on `availabilityResults/availabilityPercentage`.
+2. **HTTP 5xx > 5%/5min** — `Microsoft.Insights/scheduledQueryRules` (KQL against App Insights `requests`) — see SR-010 dependency above.
+3. **Azure OpenAI quota > 80% TPM** — two `metricAlerts` (chat + embedding deployments) on `TokenTransaction`, dimension-filtered by `ModelDeploymentName`, threshold = `capacity × 4000` (80% of 5-minute token budget).
+4. **Cosmos throttling > 10 RU/s** — `metricAlert` on `TotalRequests` filtered `StatusCode=429` — "RU/s" is not a real metric; documented as an interpretation.
+5. **AI Search 503 > 5%** — `metricAlert` on the native `ThrottledSearchQueriesPercentage` metric — no log-query needed.
+6. **App Service CPU > 85%/10min** — `metricAlert` on `CpuPercentage` (App Service Plan).
+7. **Cost anomaly > 150% of daily baseline** — `Microsoft.Consumption/budgets`, Monthly (only supported grain), 150%-of-baseline notification — documented as not a literal daily anomaly detector.
+
+All seven share one `Microsoft.Insights/actionGroups` (`ag-azurechat-{slug}`), parameterized email receiver, default `kontakt@pixelflow.dk`.
+
+**Validation before deploying:** `az bicep build` clean on all touched/new files. Scoped `az deployment group what-if` against `modules/alerts.bicep` (all params supplied with real live values) showed exactly 10 resources `+ Create`, zero modifications to anything existing. Followed by an explicit `az deployment group validate` (also non-mutating, invokes RP-side semantic checks) — `provisioningState: Succeeded`.
+
+**First deploy attempt — one failure, non-destructive, fixed:** `az deployment group create` failed on `alert-cosmos-throttling-val1` only: `"Time aggregation must be one of [Count]"` — `TotalRequests` does not support `timeAggregation: Total` (assumed incorrectly; neither `what-if` nor `validate` caught this, only the real PUT did). The other 9 resources deployed successfully in the same run (confirmed via `az resource list`). Fixed `timeAggregation: 'Count'` in `modules/alerts.bicep` with a comment documenting the correction, rebuilt (`az bicep build` clean), redeployed — `provisioningState: Succeeded`, all 10 resources now present and `enabled: true` (`az monitor metrics alert list`, `az resource show` for the scheduledQueryRule and budget, `az monitor action-group show` for the email receiver — all verified).
+
+### Gates
+- `az bicep build` clean on `modules/alerts.bicep`, `modules/openai.bicep`, `modules/app-service.bicep`, `main.bicep` — no new warnings/errors beyond the pre-existing documented set; all JSON twins regenerated.
+- `bash infra/scripts/verify-cosmos-schema.sh -g rg-azurechat-val1 -s val1 -w app-azurechat-val1` → **all checks passed, exit 0**.
+- Site check: `curl https://val1-sales360.pixelflow.dk/` → `200`.
+- `az lock list --resource-group rg-azurechat-val1` → both delete locks (`st-val1-delete-lock`, `cosmos-azurechat-val1-delete-lock`) confirmed still present, untouched by this purely-additive deployment.
+
+### Scope discipline
+Touched: `infra/modules/alerts.bicep` (new), `infra/modules/alerts.json` (new), `infra/policy/` is unrelated (H-3, already reported) — for H-5 specifically: `infra/main.bicep`, `infra/main.json`, `infra/modules/openai.bicep`, `infra/modules/openai.json` (output only), `infra/modules/app-service.bicep`, `infra/modules/app-service.json` (output only), plus `docs/`. Did **not** touch `infra/modules/observability.bicep` or `infra/modules/key-vault.bicep` — verified both unmodified before starting and left untouched throughout. No git commit/push performed — lead commits.
+
+### Result: CLOSED
+All seven SAD §31.2 alerts are implemented, deployed, and verified live on val1, each honestly labeled by its real underlying mechanism (metric alert / log-query alert / budget notification) rather than treated as interchangeable. Two rows (Cosmos "RU/s", cost "150%/day") are documented, deliberate interpretations of SAD wording that doesn't map to a literal Azure primitive — flagged in three places so this isn't mistaken for either "done exactly as written" or "not done." **Remains for the operator:** (1) commit + deploy SR-010 (`src/instrumentation.ts`) for the HTTP 5xx% alert to have real data — that work belongs to the parallel telemetry agent, not this one; (2) if true daily-level cost anomaly detection is wanted, configure Azure Cost Management's native Anomaly Alert feature separately (not a per-customer Bicep resource); (3) confirm the two Application Insights webtest location IDs (`emea-nl-ams-azr`, `emea-gb-db3-azr`) continue to be valid over time — they were accepted by live ARM validation and deployment on 2026-08-11 but could not be cross-checked against any Azure-published enumeration endpoint in this session.
+
 ## val1 — product UI layer deployment (2026-08-11)
 
 **Subscription guard:** `az account show` confirmed `"Azure subscription 1"` (`ceb8f0de-f43f-4e86-8a39-3aa338af5e10`) — proceeded.

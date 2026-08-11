@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "16020352117861956285"
+      "templateHash": "4485051071132599490"
     }
   },
   "parameters": {
@@ -165,6 +165,10 @@
     "embeddingModelDeploymentName": {
       "type": "string",
       "value": "[parameters('embeddingModelName')]"
+    },
+    "chatModelCapacity": {
+      "type": "int",
+      "value": "[variables('selectedChatModel').capacity]"
     }
   }
 }

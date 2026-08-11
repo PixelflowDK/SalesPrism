@@ -6,4 +6,3 @@ param azureRegion             = 'northeurope'
 param appServiceSku           = 'B3'
 param aiModelTier             = 'standard'
 param aiSearchSku             = 'basic'
-param enableZeroDataRetention = false

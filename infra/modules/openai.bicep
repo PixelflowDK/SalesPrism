@@ -110,3 +110,10 @@ output openAiName string = openAiAccount.name
 output openAiEndpoint string = openAiAccount.properties.endpoint
 output chatModelDeploymentName string = openAiDeployment.name
 output embeddingModelDeploymentName string = embeddingDeployment.name
+// H-5 (2026-08-11) — resolved chat-model capacity (1K TPM units), needed to
+// compute the SAD §31.2 "Azure OpenAI quota >80% TPM" alert threshold in
+// modules/alerts.bicep. main.bicep already knows embeddingModelCapacity
+// directly (it's an unresolved top-level param, not tier-computed like chat
+// capacity is), so only this one new output is needed. Purely additive —
+// does not change any deployed resource property.
+output chatModelCapacity int = selectedChatModel.capacity

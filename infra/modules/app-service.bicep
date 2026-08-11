@@ -45,6 +45,9 @@ param cosmosDbUri string
 @description('Key Vault name (NOT the endpoint URL) — key-vault.ts AZURE_KEY_VAULT_NAME.')
 param keyVaultName string
 
+@description('Key Vault URI (e.g. https://kv-azurechat-{slug}.vault.azure.net/) — SR-001: used to build Key Vault reference app-setting values below. Never a secret itself.')
+param keyVaultUri string
+
 @description('Storage account name — azure-storage.ts AZURE_STORAGE_ACCOUNT_NAME.')
 param storageAccountName string
 
@@ -70,8 +73,85 @@ param speechResourceId string
 @description('Azure AI Speech account endpoint URL — proposed contract: AZURE_SPEECH_ENDPOINT.')
 param speechEndpoint string
 
+// ---------------------------------------------------------------------------
+// H-2 (2026-08-11) — ingress restrictions. Without this, the App Service's
+// default *.azurewebsites.net hostname is open to the entire internet and
+// completely bypasses Cloudflare (WAF, rate limiting, DDoS protection) —
+// anyone who discovers app-azurechat-{slug}.azurewebsites.net reaches the
+// origin directly. Default TRUE (Cloudflare-only ingress) for all customers.
+//
+// val1 EXCEPTION: val1 currently runs UNPROXIED (Cloudflare grey-clouded /
+// DNS-only) with an App Service-managed certificate, not the Cloudflare
+// Origin Certificate + orange-cloud proxy setup SAD §7.2 describes for real
+// customers. Enabling this restriction on val1 today would immediately 502
+// the live site, because val1's own traffic does not currently arrive via
+// Cloudflare's edge IPs. This is set explicitly to `false` for val1 only, in
+// infra/environments/validation.bicepparam, with a dated comment there and a
+// matching entry in docs/known-limitations.md. Production customers must NOT
+// use this exception — see SAD §7.2 for what production requires (Cloudflare
+// proxy + Origin Certificate) before this can safely default to true there.
+// ---------------------------------------------------------------------------
+@description('H-2 — restrict App Service ingress to Cloudflare IP ranges only (default-deny otherwise). Must be false only for an explicitly documented exception (see val1 in known-limitations.md); true for every production customer.')
+param restrictIngressToCloudflare bool = true
+
+// Cloudflare published IP ranges — pinned 2026-08-11 from
+// https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6.
+// Cloudflare rotates these infrequently but not never; re-fetch both URLs and
+// update this list (plus re-run `az bicep build` + a fresh what-if) as part
+// of any periodic infra review — do not assume this list is permanent.
+var cloudflareIpv4Ranges = [
+  '173.245.48.0/20'
+  '103.21.244.0/22'
+  '103.22.200.0/22'
+  '103.31.4.0/22'
+  '141.101.64.0/18'
+  '108.162.192.0/18'
+  '190.93.240.0/20'
+  '188.114.96.0/20'
+  '197.234.240.0/22'
+  '198.41.128.0/17'
+  '162.158.0.0/15'
+  '104.16.0.0/13'
+  '104.24.0.0/14'
+  '172.64.0.0/13'
+  '131.0.72.0/22'
+]
+var cloudflareIpv6Ranges = [
+  '2400:cb00::/32'
+  '2606:4700::/32'
+  '2803:f800::/32'
+  '2405:b500::/32'
+  '2405:8100::/32'
+  '2a06:98c0::/29'
+  '2c0f:f248::/32'
+]
+
+var cloudflareIpSecurityRestrictions = [for (range, i) in concat(cloudflareIpv4Ranges, cloudflareIpv6Ranges): {
+  ipAddress: range
+  action: 'Allow'
+  priority: 100 + i
+  name: 'cloudflare-${i}'
+  description: 'Cloudflare edge IP range — pinned 2026-08-11'
+}]
+
 var planName = 'plan-azurechat-${customerSlug}'
 var appName = 'app-azurechat-${customerSlug}'
+
+// ---------------------------------------------------------------------------
+// SR-001 — Key Vault references for the two auth secrets (docs/security-
+// decision-log.md). Fixed secret-name convention within the customer's own
+// Key Vault (kv-azurechat-{slug}) — the provisioning pipeline (Entra app
+// registration step) and rotation runbook must write to these exact names.
+// Using the unversioned `SecretUri` form (no `/<version>` segment) means
+// rotating the secret's value in Key Vault takes effect without a redeploy —
+// App Service polls for a new version automatically. The App Service platform
+// resolves the reference itself, over the private VNet integration, using the
+// managed identity's `Key Vault Secrets User` role (rbac.bicep) — the app
+// process only ever sees the resolved secret in process.env, never this
+// string, and this string itself is not a secret (it is a pointer).
+// ---------------------------------------------------------------------------
+var azureAdClientSecretKeyVaultRef = '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/azure-ad-client-secret/)'
+var nextAuthSecretKeyVaultRef = '@Microsoft.KeyVault(SecretUri=${keyVaultUri}secrets/nextauth-secret/)'
 
 // Placeholder only — the real customer FQDN ({slug}-sales360.pixelflow.dk) is
 // created later by the provisioning workflow's configure-dns job, which is
@@ -111,6 +191,28 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
     siteConfig: {
       linuxFxVersion: 'NODE|22-lts'
       vnetRouteAllEnabled: true
+      // H-2 — main-site ingress. When restrictIngressToCloudflare is true:
+      // allow-list Cloudflare's edge ranges, default-deny everything else.
+      // When false (val1 exception only): no restrictions, matching prior
+      // (unrestricted) behavior exactly — this branch exists so the val1
+      // exception doesn't 502 the live, currently-unproxied site.
+      ipSecurityRestrictions: restrictIngressToCloudflare ? cloudflareIpSecurityRestrictions : []
+      ipSecurityRestrictionsDefaultAction: restrictIngressToCloudflare ? 'Deny' : 'Allow'
+      // H-2 — SCM/Kudu (deployment) endpoint deliberately NOT restricted to
+      // Cloudflare here. Cloudflare does not proxy *.scm.azurewebsites.net —
+      // applying the same Cloudflare-only allow-list to SCM would break every
+      // deployment path this team actually uses (`az webapp deploy` ZipDeploy
+      // over Kudu, and the future provision-customer.yml GitHub Actions
+      // pipeline), not just tighten security. SCM hardening is a distinct,
+      // deliberately deferred piece of work — the SAD decisions log already
+      // notes the real target state ("Access Restrictions tillader GitHub
+      // Actions IP-ranges på SCM-endpoint"), which requires GitHub's published
+      // Actions IP ranges (large, rotate more often than Cloudflare's) and is
+      // out of scope for H-2. Left at the platform default (open) rather than
+      // silently reusing the main-site list, which would be actively wrong.
+      // Tracked in docs/known-limitations.md — do not silently "fix" this by
+      // copying ipSecurityRestrictions here without doing that work for real.
+      scmIpSecurityRestrictionsUseMain: false
       appSettings: [
         { name: 'AZURE_OPENAI_API_INSTANCE_NAME',   value: openAiInstanceName }
         { name: 'AZURE_OPENAI_API_VERSION',         value: openAiApiVersion }
@@ -121,6 +223,14 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'AZURE_SEARCH_INDEX_NAME',          value: searchIndexName }
         { name: 'AZURE_COSMOSDB_URI',               value: cosmosDbUri }
         { name: 'AZURE_KEY_VAULT_NAME',             value: keyVaultName }
+        // SR-001 — Key Vault references, never plaintext secrets. See the
+        // comment above `azureAdClientSecretKeyVaultRef` for the naming
+        // convention and rotation behavior. Resolves to "Unresolved" in the
+        // Azure portal until the provisioning pipeline creates the two
+        // secrets in this customer's Key Vault — expected on a fresh deploy,
+        // not a template bug.
+        { name: 'AZURE_AD_CLIENT_SECRET',           value: azureAdClientSecretKeyVaultRef }
+        { name: 'NEXTAUTH_SECRET',                  value: nextAuthSecretKeyVaultRef }
         { name: 'AZURE_STORAGE_ACCOUNT_NAME',       value: storageAccountName }
         { name: 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligenceEndpoint }
         { name: 'AZURE_SPEECH_REGION',              value: speechRegion }
@@ -140,3 +250,6 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
 output appServiceId string = appService.id
 output appServicePrincipalId string = appService.identity.principalId
 output appServiceHostname string = appService.properties.defaultHostName
+// H-5 (2026-08-11) — App Service Plan resource id, needed for the CPU alert
+// scope in modules/alerts.bicep. Purely additive.
+output appServicePlanId string = appServicePlan.id

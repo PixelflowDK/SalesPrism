@@ -4,6 +4,28 @@ param customerSlug string
 param location string
 param tags object
 
+// ---------------------------------------------------------------------------
+// SR-007 (2026-08-11) — blob soft delete was completely disabled (confirmed
+// live on stval136sepgklp44gk: deleteRetentionPolicy.enabled=false), meaning
+// zero accidental-deletion recovery window and never a deliberate, documented
+// decision. Enabling it creates a GDPR tension that must be stated plainly,
+// not glossed over: `EraseDataSubject` (gdpr-erasure-service.ts,
+// `eraseBlobsForThreads`) hard-deletes image blobs on an erasure request, but
+// once soft delete is enabled, Azure retains a RECOVERABLE copy of every
+// "deleted" blob for exactly this many days — an erased data subject's image
+// is therefore not truly gone from Microsoft's storage until this window also
+// elapses. 7 days is chosen as the shortest practical window that gives real
+// accidental-deletion protection (the reason soft delete exists at all) while
+// keeping the GDPR erasure tail short and precisely documented rather than
+// silently absent (0 days) or needlessly long. See
+// docs/gdpr-erasure-evidence.md for the full retention-chain statement this
+// value feeds into.
+// ---------------------------------------------------------------------------
+@minValue(1)
+@maxValue(365)
+@description('SR-007 — blob soft-delete retention window (days). GDPR tension: this many days after an erasure-triggered hard delete, the blob remains recoverable by Azure before being permanently purged. Keep in sync with docs/gdpr-erasure-evidence.md.')
+param blobSoftDeleteRetentionDays int = 7
+
 var storageName = 'st${customerSlug}${uniqueString(resourceGroup().id)}'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
@@ -29,6 +51,23 @@ resource deleteLock 'Microsoft.Authorization/locks@2020-05-01' = {
   properties: {
     level: 'CanNotDelete'
     notes: 'Protect customer data from accidental deletion'
+  }
+}
+
+// SR-007 — explicit blob soft-delete retention. Deliberately scoped to blob
+// soft delete ONLY (not container soft delete, versioning, or change feed —
+// those remain intentionally off; see docs/known-limitations.md for why).
+// This resource is additive to the account (not a full-object PUT of
+// storageAccount.properties above), so it carries no risk of resetting any
+// storageAccount property verified live before this change.
+resource blobServiceProperties 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+  name: 'default'
+  parent: storageAccount
+  properties: {
+    deleteRetentionPolicy: {
+      enabled: true
+      days: blobSoftDeleteRetentionDays
+    }
   }
 }
 

@@ -11,6 +11,61 @@ const nextConfig = {
   // webpack trying to statically bundle/analyze that branch for the
   // server build, same reasoning as `@azure/storage-blob` below.
   serverExternalPackages: ["@azure/storage-blob", "microsoft-cognitiveservices-speech-sdk"],
+  // SR-010: `@azure/monitor-opentelemetry` (loaded from src/instrumentation.ts,
+  // dynamically imported and gated to the Node runtime only) pulls in
+  // `@opentelemetry/sdk-node`'s full optional-exporter tree — OTLP-over-gRPC
+  // (`@grpc/grpc-js`), Prometheus, YAML/ajv config parsing — none of which
+  // this app uses (only the Azure Monitor exporter is actually invoked), but
+  // all of which `require()` Node core modules (`tls`/`net`/`zlib`/`http`)
+  // that webpack cannot resolve for a bundled build.
+  //
+  // `serverExternalPackages` (used above for the two other Node-native
+  // dependencies) does not reach this case: Next's `instrumentation.ts` entry
+  // compiles through a separate webpack config from route handlers, and a
+  // *dynamically* `import()`-ed package's transitive dependencies keep getting
+  // traced into by webpack regardless of the serverExternalPackages list
+  // (verified empirically — listing every individual offending package there
+  // still left new ones surfacing one build at a time). A raw webpack
+  // `externals` function, matched by request prefix rather than by an
+  // exhaustive package list, is unaffected by that gap and immune to new
+  // transitive dependencies appearing in a future SDK version.
+  //
+  // `nextRuntime !== 'edge'` is load-bearing, not `isServer` alone: Next
+  // compiles THREE targets (client, Node.js server, and the Edge
+  // runtime — which is what `middleware.ts` builds through), and `isServer`
+  // is `true` for both the Node.js server AND the Edge target. The Edge
+  // runtime has no `require()`/Node core modules at all, so telling webpack
+  // to leave these packages as `commonjs` externals for that target produced
+  // a middleware bundle that threw on every request needing auth — every
+  // `requireAuth` route (`/chat`, `/admin`, `/customers`, `/briefs`, …)
+  // started 500ing instead of redirecting unauthenticated visitors to `/`.
+  // Caught live on val1 before sign-off (see docs/deployment-record.md,
+  // SR-010 section) — scoping this to the Node.js target only fixes it, since
+  // middleware never imports any of the matched packages itself.
+  webpack: (config, { isServer, nextRuntime }) => {
+    if (isServer && nextRuntime !== "edge") {
+      const existing = Array.isArray(config.externals)
+        ? config.externals
+        : config.externals
+        ? [config.externals]
+        : [];
+      config.externals = [
+        ...existing,
+        ({ request }, callback) => {
+          if (
+            request &&
+            /^(@opentelemetry\/|@azure\/monitor-opentelemetry|@grpc\/|@js-sdsl\/|protobufjs|^yaml$|^ajv)/.test(
+              request
+            )
+          ) {
+            return callback(null, `commonjs ${request}`);
+          }
+          callback();
+        },
+      ];
+    }
+    return config;
+  },
 };
 
 /**

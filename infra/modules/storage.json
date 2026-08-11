@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "5403819572769614640"
+      "templateHash": "11621213968630560807"
     }
   },
   "parameters": {
@@ -17,6 +17,15 @@
     },
     "tags": {
       "type": "object"
+    },
+    "blobSoftDeleteRetentionDays": {
+      "type": "int",
+      "defaultValue": 7,
+      "minValue": 1,
+      "maxValue": 365,
+      "metadata": {
+        "description": "SR-007 — blob soft-delete retention window (days). GDPR tension: this many days after an erasure-triggered hard delete, the blob remains recoverable by Azure before being permanently purged. Keep in sync with docs/gdpr-erasure-evidence.md."
+      }
     }
   },
   "variables": {
@@ -49,6 +58,20 @@
       "properties": {
         "level": "CanNotDelete",
         "notes": "Protect customer data from accidental deletion"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-01-01",
+      "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+      "properties": {
+        "deleteRetentionPolicy": {
+          "enabled": true,
+          "days": "[parameters('blobSoftDeleteRetentionDays')]"
+        }
       },
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"

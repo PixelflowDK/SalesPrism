@@ -256,15 +256,28 @@ Trigger for opgradering: aktiv dokumentbrug nærmer sig ~12 GB (Basic-tier giver
 | Azure Storage | `Storage Blob Data Contributor` |
 | Azure Document Intelligence | `Cognitive Services User` |
 
-### 6.5 ZDR-parathed
+### 6.5 ZDR-status [Korrigeret 2026-08-11 — SR-006]
 
-Bicep-templaten inkluderer en ZDR-parameter fra dag 1, standard `false`:
+**Der findes ingen ZDR-parameter i Bicep-templaten.** En `enableZeroDataRetention bool = false`
+parameter blev tidligere deklareret i `infra/main.bicep` men blev aldrig sendt videre til
+`modules/openai.bicep`, og intet `Microsoft.CognitiveServices/accounts`-property i de API-versioner
+dette repo bruger implementerer ZDR. Parameteren blev fjernet (SR-006, 2026-08-11) — se
+`docs/known-limitations.md` og `docs/gdpr-erasure-evidence.md` §6 for den fulde sporing.
 
-```bicep
-param enableZeroDataRetention bool = false
-```
+**Hvad ZDR faktisk kræver:** Azure OpenAI Zero Data Retention er en konto-niveau-tildeling som
+Microsoft giver efter en Limited Access Program-ansøgning — ikke en deploybar Bicep/ARM-property.
+Processen forbliver: operatør ansøger Microsoft → godkendelse 1–4 uger → Microsoft aktiverer ZDR
+for den godkendte `oai-azurechat-{slug}`-konto ud-af-båndet. Der findes ikke i dag noget kodested i
+dette repo der skal (eller kan) ændres for at aktivere det — godkendelsen alene er den fulde
+mekanisme, indtil Microsoft dokumenterer andet.
 
-Tilbydes som Enterprise Security Add-on til kunder i regulerede brancher (finans, pharma, offentlig sektor). Processen: operatør ansøger Microsoft → godkendelse 1–4 uger → re-deployment med `true` → markér i admin-portal.
+**Indtil en ansøgning er godkendt for en specifik kundekonto** kører alle `oai-azurechat-{slug}`-konti
+på Microsofts standard 30-dages misbrugsovervågnings-stikprøve (`raiMonitorConfig: null`, verificeret
+live på `oai-azurechat-val1`). Dette skal oplyses eksplicit til enhver kundes juridiske team, ikke
+fremstilles som en løst/valgfri bekymring — se `docs/gdpr-erasure-evidence.md`.
+
+**Sælg ikke ZDR som "klar fra dag 1"** før en reel Microsoft-godkendelse er opnået for den
+pågældende kundekonto.
 
 ### 6.6 Azure OpenAI Kvotelægning
 
@@ -334,6 +347,34 @@ Cloudflare proxy aktiveret (`proxied: true`):
 - **X-Forwarded-Proto:** Next.js-applikationen skal læse `X-Forwarded-Proto`-headeren for at detektere HTTPS (App Service terminerer TLS ved load balancer og leverer HTTP til applikationskoden)
 - Hele flowet er automatiseret i provisioning-workflowet
 
+### 7.2a App Service ingress-restriktion (H-2, implementeret 2026-08-11)
+
+**Fundet:** `app-azurechat-{slug}.azurewebsites.net` er, uanset Cloudflare-opsætningen ovenfor,
+altid et separat, offentligt tilgængeligt hostname på selve App Service-ressourcen — Azure
+publicerer det automatisk og kan ikke slås fra. Uden en eksplicit ingress-restriktion kan enhver,
+der gætter eller opdager dette hostname, nå origin **direkte**, fuldstændig uden om Cloudflares
+WAF, rate limiting og DDoS-beskyttelse fra §7.3's tabel.
+
+**Fix:** `modules/app-service.bicep` sætter nu `siteConfig.ipSecurityRestrictions` til Cloudflares
+publicerede IP-ranges (hentet fra `https://www.cloudflare.com/ips-v4` og `/ips-v6`, pinnet med
+dateret kommentar i kildekoden) med `ipSecurityRestrictionsDefaultAction: 'Deny'`, styret af en ny
+parameter `restrictIngressToCloudflare bool = true` (default sand for alle kunder).
+
+**val1-undtagelse (bevidst, dateret):** val1 kører i dag **uproxied** (Cloudflare DNS-only, ikke
+orange-cloud) med et App Service-administreret certifikat — ikke §7.2's Origin Certificate +
+Full-strict-opsætning. At aktivere restriktionen på val1 ville øjeblikkeligt givet 502, fordi
+val1's trafik ikke ankommer via Cloudflares edge-IP'er i dag. `restrictIngressToCloudflare` er
+derfor sat eksplicit til `false` for val1 alene i `infra/environments/validation.bicepparam`, med
+dateret kommentar der. **Ingen produktionskunde må bruge denne undtagelse** — en produktionskunde
+skal først have Cloudflare-proxy + Origin Certificate (§7.2) på plads, hvorefter restriktionen kan
+stå på sin sande default. Se `docs/known-limitations.md` for status og oprydningsplan.
+
+**SCM/Kudu (deployment-endpoint):** bevidst IKKE omfattet af samme restriktion — Cloudflare
+proxier ikke `*.scm.azurewebsites.net`, så at genbruge Cloudflare-listen der ville blokere alle
+reelle deployment-veje (`az webapp deploy`, den kommende `provision-customer.yml` GitHub Actions
+pipeline). SCM-hærdning (GitHub Actions' egne IP-ranges, jf. tabellen i decisions-loggen) er et
+separat, bevidst udskudt arbejde — se `docs/known-limitations.md`.
+
 ### 7.3 Sikkerhedsoversigt
 
 | Angrebsflade | Afbødning |
@@ -342,7 +383,8 @@ Cloudflare proxy aktiveret (`proxied: true`):
 | Internet → Cosmos DB | ❌ Blokeret — kun Private Endpoint |
 | Internet → AI Search | ❌ Blokeret — kun Private Endpoint |
 | Internet → Key Vault | ❌ Blokeret — kun Private Endpoint |
-| DDoS mod kundesubdomæne | ✅ Cloudflare absorberer |
+| Internet → `app-azurechat-{slug}.azurewebsites.net` (uden om Cloudflare) | ✅ Blokeret pr. 2026-08-11 (H-2) — `ipSecurityRestrictions` begrænset til Cloudflares IP-ranges, default-deny. **Undtagelse: val1** kører stadig helt åbent (uproxied, dokumenteret bevidst — se §7.2a) |
+| DDoS mod kundesubdomæne | ✅ Cloudflare absorberer (kun for kunder med `restrictIngressToCloudflare: true` OG aktiv Cloudflare-proxy — se §7.2a) |
 | Credential-tyveri | N/A — ingen credentials eksisterer |
 | Cross-kunde dataadgang | ❌ Umuligt — separate fysiske ressourcer |
 
@@ -987,17 +1029,55 @@ GDPR artikel 20 (dataportabilitet) overholdt.
 | Logs og telemetri | Application Insights (samme region) | Kun EU |
 | Supportinteraktioner | Microsoft EU Data Boundary (feb. 2025) | Kun EU |
 
-### 16.2 Azure Policy-håndhævelse
+### 16.2 Azure Policy-håndhævelse [Korrigeret 2026-08-11 — H-3]
 
-Abonnementsniveaupolitik:
-- Nægter ressourceoprettelse udenfor `northeurope` og `westeurope`
-- Blokerer offentlig netværksadgang på AI-tjenester som standard
+**Fundet (før dette var rettet):** ingen abonnementsniveau Azure Policy eksisterede overhovedet.
+Håndhævelse var udelukkende `@allowed()`-decorators i Bicep (`infra/main.bicep`,
+`infra/modules/openai.bicep`) — en simpel PR der fjerner en decorator ville have kunnet omgå det
+fuldstændigt, uden noget abonnements-niveau at fange det. Verificeret ved `az policy definition
+list`/`az policy assignment list` mod "Azure subscription 1" 2026-08-11: ingen Sales
+Prism-relaterede policy-definitioner eller -assignments fandtes.
 
-Hård gardering — fejlkonfiguration i Bicep kan ikke resultere i data der forlader EU.
+**Implementeret 2026-08-11:** tre Azure Policy-definitioner + ét initiative i `infra/policy/`
+(kun definitioner — IKKE assignet, se nedenfor):
+- `deny-non-eu-region.bicep` — nægter ressourceoprettelse udenfor `northeurope`, `westeurope`,
+  `swedencentral` (ADR-002, kun Cosmos-kapacitetsfald-back, men denne policy skelner ikke pr.
+  ressourcetype — swedencentral tillades abonnements-bredt af enkelhedshensyn)
+- `deny-openai-global-standard.bicep` — nægter `GlobalStandard`-SKU på
+  `Microsoft.CognitiveServices/accounts/deployments`-ressourcer (verificeret Policy-alias
+  `Microsoft.CognitiveServices/accounts/deployments/sku.name` via `az provider show` — ikke gættet)
+- `require-standard-tags.bicep` — nægter oprettelse uden alle fire påkrævede tags
+  (`customer`/`environment`/`managed-by`/`model-tier`)
+- `initiative.bicep` — samler alle tre i ét `sales-prism-guardrails` policy set til én samlet
+  assignment-kommando
 
-### 16.3 ZDR-strategi
+Alle fire `az bicep build`-rene og `az deployment sub validate`-verificerede (read-only, ingen
+ressourcer oprettet af denne øvelse).
 
-Standarddeployments inkluderer Microsofts 30-dages misbrugsovervågnings-stikprøve. ZDR eliminerer dette fuldstændigt og tilbydes som **Enterprise Security Add-on**. Se Section 6.5.
+**Bevidst IKKE gjort af denne agent:** hverken deployment af definitionerne eller — vigtigst —
+**assignment** til abonnementsscope. En abonnements-bred `deny`-policy er en operatørbeslutning
+med reelt blast-radius (kan blokere enhver fremtidig deployment, inkl. legitime), og skal
+gennemføres bevidst af Kristjan, ikke af en agent der arbejder i `rg-azurechat-val1` alene. De
+nøjagtige `az deployment sub create` + `az policy assignment create`-kommandoer (anbefalet først
+med `--enforcement-mode DoNotEnforce` for at observere compliance før håndhævelse slås til) står i
+hver fils afsluttende kommentar og i `docs/known-limitations.md`.
+
+**Ikke dækket af denne runde (uden for scope):** SAD's oprindelige påstand om at blokere offentlig
+netværksadgang på AI-tjenester "som standard" via policy er stadig ikke implementeret som policy —
+`publicNetworkAccess: 'Disabled'` er i dag kun en Bicep-property (verificeret sat på alle AI/data-
+ressourcer), ikke en policy-håndhævet garanti. Kan tilføjes som en fjerde definition i en senere
+runde — se `docs/known-limitations.md`.
+
+Hård gardering (efter assignment — IKKE endnu aktiv) — fejlkonfiguration i Bicep kan ikke resultere
+i data der forlader EU, forudsat operatøren gennemfører assignment-trinnet ovenfor.
+
+### 16.3 ZDR-strategi [Korrigeret 2026-08-11 — SR-006]
+
+Standarddeployments inkluderer Microsofts 30-dages misbrugsovervågnings-stikprøve. ZDR eliminerer
+dette fuldstændigt og kan tilbydes som **Enterprise Security Add-on**, men **kun efter** en reel
+Microsoft Limited Access Program-godkendelse for den specifikke kundekonto — der er ingen
+Bicep-parameter eller ARM-property der aktiverer dette i dette repo i dag. Se Section 6.5 for den
+fulde status og hvad der reelt kræves.
 
 ---
 
@@ -1319,7 +1399,7 @@ Phi-4 mini er tilstrækkelig til narrow, well-structured RAG men eskalerer til G
 | Margin Standard-kunder | ~91% |
 | Offboarding | Soft delete: 30-dages karantæne → auto-sletning |
 | On-request dataeksport | Ja — knap per kunde i admin portal, Phase D |
-| ZDR-strategi | Enterprise add-on, Bicep-parameter klar fra dag 1 (default: false) |
+| ZDR-strategi | Enterprise add-on — kræver reel Microsoft Limited Access Program-godkendelse pr. kundekonto; INGEN Bicep-parameter findes eller kræves (fjernet SR-006, 2026-08-11) — se §6.5 |
 | Admin portal brand | Sales Prism brand — Playfair Display, DM Sans, DM Mono, guld `#C9A84C` |
 | Admin portal fase 1 | GitHub Actions UI |
 | Maks. kunder år 1 | 20 kunder |
@@ -1336,7 +1416,7 @@ Phi-4 mini er tilstrækkelig til narrow, well-structured RAG men eskalerer til G
 | Node 22 CI | package.json korrekt (>=22.0.0) — App Service Bicep + GitHub Actions fixes i SP-A03 |
 | Kundespecifikt metodologiindhold | RAG-upload fra admin-portal rykket til Version 1 — bruger eksisterende pipeline, documentType-tag |
 | SP-B01 status | ✅ Commit 4aeef12 — 11 Bicep-moduler, 15/15 DoD-punkter grønne. Linter warnings er forventede false positives |
-| Bicep linter warnings | `privatelink.blob.core.windows.net` er DNS zone-navn (ikke URL), `customerSlug`/`companyName`/`enableZeroDataRetention` er bevidste kontraktparametre — ingen action |
+| Bicep linter warnings | `privatelink.blob.core.windows.net` er DNS zone-navn (ikke URL), `customerSlug`/`companyName` er bevidste kontraktparametre — ingen action. `enableZeroDataRetention` var IKKE en bevidst kontraktparameter — det var dead code, fjernet SR-006 (2026-08-11) |
 | GitHub-konto | PixelflowDK (personlig konto — ikke en organisation) [Korrigeret 2026-07-30] |
 | Repo-navn | PixelflowDK/SalesPrism |
 | Lokal workspace | /Users/hugosson/workspace/SalesPrism (Mac Mini) |
@@ -1516,34 +1596,39 @@ Dokumentér i teamets driftslog.
 
 ## 22. Backup og Disaster Recovery
 
-### 22.1 Cosmos DB — Chat-historik og Temaer
+### 22.1 Cosmos DB — Chat-historik og Temaer [Verificeret/rettet 2026-08-11 — SR-007]
 
-**Standard backup-politik (inkluderet uden ekstra betaling):**
+**RP-default hvis `backupPolicy` ikke sættes eksplicit (fandtes tidligere live på `cosmos-azurechat-val1`):**
 - Fuld backup hvert **4. time**
 - Retention: **8 timer** (de 2 seneste backups bevares)
 - Genopretning: via Azure Support-ticket (ikke selvbetjening)
 - Gendannelse sker til en **ny Cosmos DB-konto** — du kobler derefter applikationen om
 
-**Anbefalet opgradering — Continuous Backup:**
-For en produktionsplatform er standard backup-politikken for svag. Continuous Backup giver:
+**Implementeret og deployeret 2026-08-11 — Continuous Backup:**
 - **Point-in-time restore** indenfor de seneste 30 dage
 - **Selvbetjening** — ingen support-ticket, du vælger selv tidspunkt
 - Pris: ca. 40–80 kr/md per kunde (backup-storage)
 
 ```bicep
-// Aktiveres i Bicep under Cosmos DB-ressourcen:
-backupPolicy: {
+// modules/cosmos-db.bicep — sat eksplicit i cosmosAccount.properties.backupPolicy:
+var backupPolicy = enableContinuousBackup ? {
   type: 'Continuous'
   continuousModeProperties: {
     tier: 'Continuous30Days'
   }
+} : {
+  type: 'Periodic'
+  periodicModeProperties: {
+    backupIntervalInMinutes: 240
+    backupRetentionIntervalInHours: 8
+    backupStorageRedundancy: 'Geo'
+  }
 }
 ```
 
-**Beslutning:** Continuous Backup anbefales aktiveret fra Phase B. Det tilføjes som en Bicep-parameter:
-```bicep
-param enableContinuousBackup bool = true
-```
+**Beslutning (nu reelt implementeret, ikke kun dokumenteret):** `param enableContinuousBackup bool = true` findes i `infra/main.bicep` og `modules/cosmos-db.bicep`, wired til `cosmosAccount.properties.backupPolicy`. `cosmos-azurechat-val1` blev migreret live fra Periodic til Continuous30Days 2026-08-11 via `az cosmosdb update --backup-policy-type Continuous --continuous-tier Continuous30Days` (bekræftet in-place Modify via `az deployment group what-if` inden migrering; alle øvrige kontoegenskaber — `disableLocalAuth`, `publicNetworkAccess`, `enableAutomaticFailover`, private endpoints, tags, region — verificeret uændrede efter). Migrationen er **envejs**: en Continuous-konto kan ikke flyttes tilbage til Periodic. Se `docs/deployment-record.md` (2026-08-11) for det fulde før/efter-bevis.
+
+**Blob soft delete (samme SR-007-arbejde):** `stval136sepgklp44gk` kørte tidligere med blob soft delete slået helt fra (`deleteRetentionPolicy.enabled: false`) — ingen gendannelsesvindue ved utilsigtet sletning, og aldrig en bevidst dokumenteret beslutning. `modules/storage.bicep` sætter nu eksplicit `deleteRetentionPolicy: { enabled: true, days: 7 }` (deployeret live 2026-08-11). **GDPR-spænding, udtalt eksplicit:** `EraseDataSubject` (`gdpr-erasure-service.ts`, `eraseBlobsForThreads`) hard-sletter billed-blobs ved en sletteanmodning, men med soft delete slået til er en "slettet" blob reelt genoprettelig af Azure i præcis dette vindue (7 dage) før den er permanent væk. Se `docs/gdpr-erasure-evidence.md` for den fulde retention-kæde. Container soft delete, blob versioning og change feed forbliver bevidst slået fra (ikke del af dette fix — se `docs/known-limitations.md`).
 
 ### 22.2 Azure AI Search — Dokumentindeks
 
@@ -1578,13 +1663,15 @@ resource storageLock 'Microsoft.Authorization/locks@2020-05-01' = {
 
 ### 22.3 Recovery Time Objectives
 
-| Scenarie | Forventet gendannelsestid | Procedure |
-|---|---|---|
-| Cosmos DB korruption/utilsigtet sletning | 15–60 min | Continuous Backup point-in-time restore |
-| AI Search indeks slettet | 5–30 min | Rebuild fra Blob Storage |
-| App Service nede | 2–5 min | Azure restart / re-deployment |
-| Hel resource group slettet ved fejl | 1–4 timer | Ny provisioning + Cosmos DB restore |
-| Azure northeurope region nede | 4–24 timer | Re-deployment i westeurope |
+| Scenarie | Forventet gendannelsestid (RTO) | Datatabsvindue (RPO) | Procedure |
+|---|---|---|---|
+| Cosmos DB korruption/utilsigtet sletning | 15–60 min (selvbetjening — verificeret 2026-08-11, `cosmos-azurechat-val1` kører nu Continuous30Days, se §22.1) | **Nær-nul** (Continuous Backup logger kontinuerligt — Microsofts dokumenterede garanti er typisk sekunder-til-minutter, ikke et fast interval) | Continuous Backup point-in-time restore |
+| AI Search indeks slettet | 5–30 min | N/A — indeks er et derivat, ingen data tabes (kilde-dokumenter er i Blob Storage) | Rebuild fra Blob Storage |
+| App Service nede | 2–5 min | N/A — ingen persistent state i App Service selv | Azure restart / re-deployment |
+| Hel resource group slettet ved fejl | 1–4 timer | Samme som Cosmos-rækken ovenfor (nær-nul) forudsat Continuous Backup var aktiv før hændelsen; Blob Storage og AI Search-indeks har ingen platform-backup — se §22.2 | Ny provisioning + Cosmos DB restore |
+| Azure northeurope region nede | 4–24 timer | Afhænger af hvornår seneste Cosmos-restore-punkt/Blob-tilstand blev genskabt i westeurope — ikke uafhængigt verificeret | Re-deployment i westeurope |
+
+**Korrektion 2026-08-11 (SR-007):** før dette var Cosmos DB-rækken ovenfor aspirationel, ikke sand — kontoen kørte reelt Periodic (240min interval, 8h retention, RTO reelt timer via Support-ticket, RPO op til 4 timer), fordi `backupPolicy` aldrig var sat i Bicep (RP-default). Tabellen beskriver nu, hvad der faktisk er deployeret og verificeret på `cosmos-azurechat-val1` — se `docs/deployment-record.md` (2026-08-11) for før/efter-bevis, og §22.1 for detaljerne.
 
 ---
 
@@ -2149,19 +2236,24 @@ ISV Platform (rg-salesprism-platform):
 
 **GDPR-begrundelse for per-kunde workspace:** Telemetri kan indeholde bruger-ID'er, IP-adresser og exception-detaljer der indirekte identificerer brugere. Per-kunde isolation sikrer at en fejlkonfigureret RBAC-tildeling aldrig eksponerer én kundes telemetri for en anden.
 
-### 31.2 Standard Alerting Baseline
+### 31.2 Standard Alerting Baseline [Implementeret + korrigeret 2026-08-11 — H-5]
 
-Konfigureres automatisk af Bicep per kunde:
+Konfigureres automatisk af Bicep per kunde (`infra/modules/alerts.bicep`, deployeret og
+verificeret live på val1 2026-08-11 — se `docs/deployment-record.md`). Hver alert er implementeret
+i sin korrekte native Azure Monitor-form — ikke alle er "samme slags" alert:
 
-| Alert | Tærskel | Kanal |
-|---|---|---|
-| App Service availability | < 99% over 5 min | Email til InsightCast |
-| HTTP 5xx rate | > 5% over 5 min | Email til InsightCast |
-| Azure OpenAI quota | > 80% TPM forbrugt | Email til InsightCast |
-| Cosmos DB throttling | > 10 RU/s throttled | Email til InsightCast |
-| AI Search throttling | > 5% 503 responses | Email til InsightCast |
-| App Service CPU | > 85% over 10 min | Email til InsightCast |
-| Cost anomaly | > 150% af baseline/dag | Email til InsightCast |
+| Alert | Tærskel | Implementeringsform | Kanal |
+|---|---|---|---|
+| App Service availability | < 99% over 5 min | **Metric alert** på `availabilityResults/availabilityPercentage` (Application Insights), fodret af en `Microsoft.Insights/webtests` ping-test mod app-hostnavnet | Email til InsightCast |
+| HTTP 5xx rate | > 5% over 5 min | **Log-query alert** (`scheduledQueryRules`, KQL mod App Insights' `requests`-tabel) — ingen native procent-metric findes på App Service selv. **Afhænger af SR-010-telemetri (OpenTelemetry-instrumentering) rent faktisk kører** — uden det har denne alert ingen data at evaluere | Email til InsightCast |
+| Azure OpenAI quota | > 80% TPM forbrugt | **Metric alert** pr. deployment på `TokenTransaction` (dimension `ModelDeploymentName`), tærskel beregnet fra deployment-kapaciteten (1K TPM-enheder × 1000 × 5 min × 0,8) | Email til InsightCast |
+| Cosmos DB throttling | > 10 RU/s throttled | **Metric alert** — "RU/s" findes ikke som metric; implementeret som antal `TotalRequests` med `StatusCode=429` (dimension) > 10 over 5 min. Bevidst fortolkning, dokumenteret som sådan | Email til InsightCast |
+| AI Search throttling | > 5% 503 responses | **Metric alert** på den native `ThrottledSearchQueriesPercentage`-metric — ingen log-query nødvendig | Email til InsightCast |
+| App Service CPU | > 85% over 10 min | **Metric alert** på `CpuPercentage` (App Service Plan) | Email til InsightCast |
+| Cost anomaly | > 150% af baseline/dag | **`Microsoft.Consumption/budgets`** — men kun i sin korrekte MÅNEDLIGE form (budgets understøtter ikke en daglig `timeGrain`). Implementeret som en månedlig budget-notifikation ved 150% af det estimerede månedlige tier-forbrug (SAD §17). **Ikke** en reel dags-niveau-anomali-detektor — det kræver Azure Cost Managements separate Anomaly Alert-funktion (abonnements-/faktureringskonto-niveau, ikke en per-kunde Bicep-ressource) — se `docs/known-limitations.md` | Email til InsightCast |
+
+**Action group:** `ag-azurechat-{slug}`, parameteriseret email-modtager (default
+`kontakt@pixelflow.dk`), delt af alle syv alerts.
 
 ### 31.3 PII-minimering i Telemetri
 

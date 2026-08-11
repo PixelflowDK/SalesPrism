@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "1491133130818889353"
+      "templateHash": "8727954485209371346"
     }
   },
   "parameters": {
@@ -84,6 +84,12 @@
         "description": "Key Vault name (NOT the endpoint URL) — key-vault.ts AZURE_KEY_VAULT_NAME."
       }
     },
+    "keyVaultUri": {
+      "type": "string",
+      "metadata": {
+        "description": "Key Vault URI (e.g. https://kv-azurechat-{slug}.vault.azure.net/) — SR-001: used to build Key Vault reference app-setting values below. Never a secret itself."
+      }
+    },
     "storageAccountName": {
       "type": "string",
       "metadata": {
@@ -119,11 +125,59 @@
       "metadata": {
         "description": "Azure AI Speech account endpoint URL — proposed contract: AZURE_SPEECH_ENDPOINT."
       }
+    },
+    "restrictIngressToCloudflare": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "H-2 — restrict App Service ingress to Cloudflare IP ranges only (default-deny otherwise). Must be false only for an explicitly documented exception (see val1 in known-limitations.md); true for every production customer."
+      }
     }
   },
   "variables": {
+    "copy": [
+      {
+        "name": "cloudflareIpSecurityRestrictions",
+        "count": "[length(concat(variables('cloudflareIpv4Ranges'), variables('cloudflareIpv6Ranges')))]",
+        "input": {
+          "ipAddress": "[concat(variables('cloudflareIpv4Ranges'), variables('cloudflareIpv6Ranges'))[copyIndex('cloudflareIpSecurityRestrictions')]]",
+          "action": "Allow",
+          "priority": "[add(100, copyIndex('cloudflareIpSecurityRestrictions'))]",
+          "name": "[format('cloudflare-{0}', copyIndex('cloudflareIpSecurityRestrictions'))]",
+          "description": "Cloudflare edge IP range — pinned 2026-08-11"
+        }
+      }
+    ],
+    "cloudflareIpv4Ranges": [
+      "173.245.48.0/20",
+      "103.21.244.0/22",
+      "103.22.200.0/22",
+      "103.31.4.0/22",
+      "141.101.64.0/18",
+      "108.162.192.0/18",
+      "190.93.240.0/20",
+      "188.114.96.0/20",
+      "197.234.240.0/22",
+      "198.41.128.0/17",
+      "162.158.0.0/15",
+      "104.16.0.0/13",
+      "104.24.0.0/14",
+      "172.64.0.0/13",
+      "131.0.72.0/22"
+    ],
+    "cloudflareIpv6Ranges": [
+      "2400:cb00::/32",
+      "2606:4700::/32",
+      "2803:f800::/32",
+      "2405:b500::/32",
+      "2405:8100::/32",
+      "2a06:98c0::/29",
+      "2c0f:f248::/32"
+    ],
     "planName": "[format('plan-azurechat-{0}', parameters('customerSlug'))]",
     "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]",
+    "azureAdClientSecretKeyVaultRef": "[format('@Microsoft.KeyVault(SecretUri={0}secrets/azure-ad-client-secret/)', parameters('keyVaultUri'))]",
+    "nextAuthSecretKeyVaultRef": "[format('@Microsoft.KeyVault(SecretUri={0}secrets/nextauth-secret/)', parameters('keyVaultUri'))]",
     "nextAuthUrlPlaceholder": "[format('https://{0}.azurewebsites.net', variables('appName'))]"
   },
   "resources": [
@@ -157,6 +211,9 @@
         "siteConfig": {
           "linuxFxVersion": "NODE|22-lts",
           "vnetRouteAllEnabled": true,
+          "ipSecurityRestrictions": "[if(parameters('restrictIngressToCloudflare'), variables('cloudflareIpSecurityRestrictions'), createArray())]",
+          "ipSecurityRestrictionsDefaultAction": "[if(parameters('restrictIngressToCloudflare'), 'Deny', 'Allow')]",
+          "scmIpSecurityRestrictionsUseMain": false,
           "appSettings": [
             {
               "name": "AZURE_OPENAI_API_INSTANCE_NAME",
@@ -193,6 +250,14 @@
             {
               "name": "AZURE_KEY_VAULT_NAME",
               "value": "[parameters('keyVaultName')]"
+            },
+            {
+              "name": "AZURE_AD_CLIENT_SECRET",
+              "value": "[variables('azureAdClientSecretKeyVaultRef')]"
+            },
+            {
+              "name": "NEXTAUTH_SECRET",
+              "value": "[variables('nextAuthSecretKeyVaultRef')]"
             },
             {
               "name": "AZURE_STORAGE_ACCOUNT_NAME",
@@ -255,6 +320,10 @@
     "appServiceHostname": {
       "type": "string",
       "value": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2023-01-01').defaultHostName]"
+    },
+    "appServicePlanId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]"
     }
   }
 }

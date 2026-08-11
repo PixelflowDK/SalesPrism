@@ -120,6 +120,24 @@ erasure (`eraseBlobsForThreads`) already deletes the specific blobs immediately 
 not wait on this policy; the 90-day rule is a backstop for images whose owning subject
 never triggers an erasure request.
 
+**Addendum 2026-08-11 (SR-007, both findings above resolved, with a new documented tradeoff):**
+- **Lifecycle policy:** re-verified live — `management-policy show` now returns the
+  `delete-images-after-90-days` rule (`lastModifiedTime: 2026-08-10T14:39:02Z`), matching
+  committed source exactly. It was deployed sometime between this document's original
+  2026-07-31 capture and this addendum; exact date/actor not tracked here. No longer "not yet
+  deployed."
+- **Blob soft delete:** deliberately enabled 2026-08-11, reversing the "good news for erasure
+  completeness" framing above. `deleteRetentionPolicy: { enabled: true, days: 7 }` is now live
+  (`az storage account blob-service-properties show` confirms `enabled: true, days: 7`), added
+  via a new `blobSoftDeleteRetentionDays` param in `modules/storage.bicep` (default 7). **This
+  reintroduces exactly the soft-delete shadow-copy window the paragraph above said didn't
+  exist:** `eraseBlobsForThreads`'s hard delete now leaves a recoverable copy in Azure for up to
+  7 days before permanent purge. This is a deliberate tradeoff (real accidental-deletion
+  protection, previously entirely absent, in exchange for a short, explicit, and now-documented
+  GDPR erasure tail) — not an oversight. See the row 7 (`Blob storage (images/ container)`)
+  table update below and `docs/known-limitations.md` for the rationale. Container soft delete
+  and blob versioning remain disabled — out of scope for this fix.
+
 ---
 
 ## 3. Azure AI Search deletion propagation
@@ -296,6 +314,13 @@ different and more serious retention path than any of the app-controlled stores 
 and should be disclosed to customers' legal teams as such rather than glossed over via
 the "ZDR-ready" framing in SAD §6.5/§16.3.
 
+**Addendum 2026-08-11 (SR-006, resolved):** the dead `enableZeroDataRetention` parameter described
+above has been removed from `infra/main.bicep` and both `.bicepparam` files, and SAD §6.5/§16.3
+corrected to stop implying a deployable ZDR control exists. This addendum does not change any
+finding above — the 30-day Microsoft-side abuse-monitoring retention this section documents is
+still live and unmitigated on every `oai-azurechat-{slug}` account, including `oai-azurechat-val1`.
+See `docs/known-limitations.md` (SR-006) and `docs/deployment-record.md` for the change record.
+
 ---
 
 ## 7. Expected end-to-end delay — per store
@@ -304,7 +329,7 @@ the "ZDR-ready" framing in SAD §6.5/§16.3.
 |---|---|---|---|
 | Cosmos DB (chat/config containers) | Immediate (`EraseDataSubject`, hard delete by id) | Up to **~8h** (periodic backup retention) after the last backup that captured the pre-erasure state, which itself was taken ≤4h before erasure | `az cosmosdb show` — live |
 | Cosmos DB — `ActivityEvent` only | Immediate (hard delete) **and** independently TTL-capped at 30 days even if never explicitly erased | Same ~8h backup tail as above | Source read (`cosmos-retention.ts`) + `az cosmosdb show` |
-| Blob storage (`images/` container) | Immediate (`eraseBlobsForThreads`, per-thread-prefix delete) | **None currently** — soft delete/versioning disabled, so a hard delete is final; the 90-day lifecycle backstop (for un-erased images) is **not yet deployed** to val1 | `az storage account blob-service-properties show`, `management-policy show` — live |
+| Blob storage (`images/` container) | Immediate (`eraseBlobsForThreads`, per-thread-prefix delete) — but see the SR-007 update below | **[UPDATED 2026-08-11 — SR-007] 7 days.** Blob soft delete is now enabled (`deleteRetentionPolicy: { enabled: true, days: 7 }`, deployed live to `stval136sepgklp44gk`) — a hard delete triggered by `eraseBlobsForThreads` is therefore NOT immediately final; Azure retains a recoverable copy of the "deleted" blob for up to 7 days before permanent purge. This is a deliberate trade — see `docs/known-limitations.md` and SAD §22.1 for the accidental-deletion-protection rationale — but it means the true erasure completion for an image blob is "immediate app-level delete + up to 7 days before Azure's own copy is gone," not instant. The 90-day lifecycle backstop (for un-erased images) is confirmed deployed (`lastModifiedTime: 2026-08-10T14:39:02Z`). Container soft delete and blob versioning remain disabled. | `az storage account blob-service-properties show`, `management-policy show` — live, re-verified 2026-08-11 |
 | Azure AI Search index | Immediate, per Microsoft's documented consistency model (delete visible to queries right away) | Not independently observable; no customer-facing backup/snapshot surface exists per SAD §22.2 | Source read + public product docs — **not independently verified against a live delete** |
 | App Insights / Log Analytics | N/A — nothing is deleted per-subject; hashed id + counts only | Fixed **30 days** from ingestion (platform retention) | `az monitor log-analytics workspace show`, `az monitor app-insights component show` — live |
 | GDPR erasure audit record | N/A — deliberately retained forever (legal/audit record) | Never expires by design | Source read (Zod schema, `TENANT_LEVEL_EXCLUDED_DOCUMENT_TYPES`) |
@@ -332,9 +357,24 @@ the "ZDR-ready" framing in SAD §6.5/§16.3.
 - **Application Insights / Log Analytics telemetry** — hashed subject id, tenant slug, request metadata, status codes, durations, token counts; no prompt/response text, filenames, or display names by design (`safe-logger.ts`'s closed allow-list), modulo the M-2 gap already tracked in `security-gdpr-review.md` for a handful of non-`safeLog` call sites. Retained 30 days (workspace-inherited). Lawful basis: legitimate interest in operational/security monitoring, bounded by a short fixed retention.
 
 ### Inaccessible backup copies awaiting expiry
-- **Cosmos periodic backups** — up to 2 backups retained, taken every 4 hours; a pre-erasure snapshot of a subject's data can persist in an existing backup for up to ~8 hours after the backup that captured it, i.e. up to roughly 12 hours worst case from the moment of erasure until the last relevant backup rolls off. Not self-service restorable by us or the customer — only via an Azure Support ticket, per SAD §22.1's own description of the standard tier.
-- **Blob soft-delete/lifecycle** — currently **not applicable** on val1: soft delete and versioning are both disabled, so there is no soft-delete shadow window to await; and the 90-day lifecycle policy that would sweep un-erased images is in source code but **not yet deployed**.
-- **Azure OpenAI abuse-monitoring copy** — up to 30 days, entirely on Microsoft's side, outside this app's or this repo's control, and not disclosed as such anywhere the SAD's ZDR framing implies it is a solved/optional concern. This is the single largest undisclosed retention exposure found in this review.
+- **[SUPERSEDED 2026-08-11 — SR-007, see below] Cosmos periodic backups** — up to 2 backups retained, taken every 4 hours; a pre-erasure snapshot of a subject's data can persist in an existing backup for up to ~8 hours after the backup that captured it, i.e. up to roughly 12 hours worst case from the moment of erasure until the last relevant backup rolls off. Not self-service restorable by us or the customer — only via an Azure Support ticket, per SAD §22.1's own description of the standard tier.
+- **[SUPERSEDED 2026-08-11 — SR-007, see below] Blob soft-delete/lifecycle** — currently **not applicable** on val1: soft delete and versioning are both disabled, so there is no soft-delete shadow window to await; and the 90-day lifecycle policy that would sweep un-erased images is in source code but **not yet deployed**.
+- **Azure OpenAI abuse-monitoring copy** — up to 30 days, entirely on Microsoft's side, outside this app's or this repo's control, and not disclosed as such anywhere the SAD's ZDR framing implies it is a solved/optional concern. This is the single largest undisclosed retention exposure found in this review. (Still true as of 2026-08-11 — see the SR-006 addendum in §6 above; this exposure was not addressed by SR-007 and remains open.)
+
+**Addendum 2026-08-11 (SR-007) — both superseded rows above, corrected:**
+- **Cosmos backups:** `cosmos-azurechat-val1` was migrated live to Continuous30Days (see §1
+  addendum above). A pre-erasure snapshot of a subject's data is now only recoverable via a
+  30-day self-service point-in-time restore window (down from the prior *un*-erasable-without-a-
+  Support-ticket periodic backup), and the RPO for any given restore point is near-continuous
+  rather than a fixed 4-hour cadence. This is a materially shorter, more precisely bounded, and
+  self-service-triggerable exposure than the row above described — but it is not zero: a
+  30-day-old backup copy of erased data remains theoretically restorable by an operator with
+  access to the Cosmos account for the full 30-day continuous-backup window, same as any
+  point-in-time restore capability.
+- **Blob soft-delete/lifecycle:** no longer "not applicable." Soft delete is now enabled
+  (7-day window) and the 90-day lifecycle policy is confirmed deployed. An erased image blob is
+  recoverable by Azure for up to 7 days post-erasure before permanent purge — see §2's addendum
+  above for the full statement of this tradeoff.
 
 ---
 

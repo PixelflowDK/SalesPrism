@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "2571673376965279975"
+      "templateHash": "9211950619003054175"
     }
   },
   "parameters": {
@@ -23,6 +23,13 @@
       "defaultValue": false,
       "metadata": {
         "description": "Zone redundancy for the Cosmos account. Default false per SAD §34.5 (single-region MVP); westeurope zonal capacity is also frequently constrained."
+      }
+    },
+    "enableContinuousBackup": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "SAD §22.1 — Continuous Backup (point-in-time restore, self-service, 30-day window) vs. Periodic (240min interval, 8h retention, Azure Support restore only). Continuous is the decided default; migration from Periodic is one-way."
       }
     },
     "databaseName": {
@@ -50,7 +57,8 @@
   "variables": {
     "historyContainerDefaultTtl": 7776000,
     "configContainerDefaultTtl": -1,
-    "accountName": "[format('cosmos-azurechat-{0}', parameters('customerSlug'))]"
+    "accountName": "[format('cosmos-azurechat-{0}', parameters('customerSlug'))]",
+    "backupPolicy": "[if(parameters('enableContinuousBackup'), createObject('type', 'Continuous', 'continuousModeProperties', createObject('tier', 'Continuous30Days')), createObject('type', 'Periodic', 'periodicModeProperties', createObject('backupIntervalInMinutes', 240, 'backupRetentionIntervalInHours', 8, 'backupStorageRedundancy', 'Geo')))]"
   },
   "resources": [
     {
@@ -77,7 +85,8 @@
         "publicNetworkAccess": "Disabled",
         "disableKeyBasedMetadataWriteAccess": true,
         "disableLocalAuth": true,
-        "enableAutomaticFailover": true
+        "enableAutomaticFailover": true,
+        "backupPolicy": "[variables('backupPolicy')]"
       }
     },
     {

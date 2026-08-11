@@ -1,0 +1,80 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "9741380736784279180"
+    }
+  },
+  "parameters": {
+    "allowedLocations": {
+      "type": "array",
+      "defaultValue": [
+        "northeurope",
+        "westeurope",
+        "swedencentral"
+      ],
+      "metadata": {
+        "description": "Allowed Azure regions — northeurope + westeurope (GDPR R1) plus swedencentral (ADR-002, Cosmos DB EU-only capacity fallback only, but this policy does not distinguish by resource type — swedencentral is allowed subscription-wide for simplicity, matching the union of every @allowed() list in infra/main.bicep)."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/policyDefinitions",
+      "apiVersion": "2021-06-01",
+      "name": "sales-prism-deny-non-eu-region",
+      "properties": {
+        "displayName": "Sales Prism — deny resource creation outside approved EU regions",
+        "description": "GDPR R1 / SAD §16.2. Denies creation or update of any location-scoped resource outside northeurope, westeurope, or swedencentral. This is a subscription-level backstop for the @allowed() region decorators in infra/main.bicep — it must hold even if those decorators are ever removed or bypassed in a future PR.",
+        "policyType": "Custom",
+        "mode": "Indexed",
+        "metadata": {
+          "category": "Sales Prism",
+          "version": "1.0.0",
+          "source": "infra/policy/deny-non-eu-region.bicep — H-3, 2026-08-11"
+        },
+        "parameters": {
+          "allowedLocations": {
+            "type": "Array",
+            "metadata": {
+              "displayName": "Allowed locations",
+              "description": "The list of locations that resources may be deployed into.",
+              "strongType": "location"
+            },
+            "defaultValue": "[parameters('allowedLocations')]"
+          }
+        },
+        "policyRule": {
+          "if": {
+            "allOf": [
+              {
+                "field": "location",
+                "notEquals": "global"
+              },
+              {
+                "field": "location",
+                "notIn": "[[parameters('allowedLocations')]"
+              }
+            ]
+          },
+          "then": {
+            "effect": "deny"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "policyDefinitionId": {
+      "type": "string",
+      "value": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'sales-prism-deny-non-eu-region')]"
+    },
+    "policyDefinitionName": {
+      "type": "string",
+      "value": "sales-prism-deny-non-eu-region"
+    }
+  }
+}

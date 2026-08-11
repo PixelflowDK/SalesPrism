@@ -9,6 +9,12 @@
 | 2026-07-30 | Embeddings run on text-embedding-3-small; text-embedding-3-large is quota-gated | Slightly lower retrieval quality vs. target embedding model | text-embedding-3-large quota granted (ADR-001) |
 | 2026-07-30 | Entra External ID CIAM tenant not yet created | Username/Password auth method (Auth Method B, SAD §8.3) cannot be provisioned yet — only Entra ID SSO available | CIAM tenant provisioned in Phase D |
 | 2026-07-30 | `DESIGN.md` regeneration pending | Design tokens in code may not yet reflect the finalized Copper Fjord/Nordic Moss/Fjord Teal/Warm Stone palette from the SAD decisions log | DESIGN.md regenerated from Stitch project "Sales Coaching Conversation View" |
+| 2026-08-11 | **H-2 val1 exception (deliberate, dated):** `restrictIngressToCloudflare` is set `false` for val1 in `infra/environments/validation.bicepparam` — val1 runs unproxied (Cloudflare DNS-only) with an App Service-managed cert, not the Cloudflare Origin Certificate + Full-strict setup SAD §7.2 describes, so val1's own traffic doesn't arrive via Cloudflare edge IPs. Enabling the restriction on val1 today would 502 the live site. | `app-azurechat-val1.azurewebsites.net` remains fully open to the internet, bypassing Cloudflare's WAF/DDoS/rate-limiting entirely — acceptable for an internal validation stack with no real customer data, not acceptable for any production customer. | val1 (or its successor) is re-proxied through Cloudflare with an Origin Certificate per SAD §7.2 — see `cloudflare-dns-engineer` agent for that work. Every production customer defaults to `restrictIngressToCloudflare: true` already and must never override it. |
+| 2026-08-11 | **H-3 Azure Policy authored but NOT assigned.** `infra/policy/` now contains three custom policy definitions (deny non-EU region, deny Azure OpenAI GlobalStandard, require standard tags) + one initiative grouping them (`sales-prism-guardrails`), all `az bicep build`-clean and `az deployment sub validate`-verified (read-only). Confirmed via `az policy definition list`/`az policy assignment list` that no Sales Prism policy exists yet in "Azure subscription 1". | Until an operator runs the deployment + assignment commands documented in each `infra/policy/*.bicep` file's trailing comment, enforcement remains ONLY the `@allowed()` Bicep decorators — exactly the H-3 finding, unchanged, until assignment happens. SAD §16.2's "hård gardering" claim is still not literally true. | Kristjan runs the `az deployment sub create` (×4) + `az policy assignment create` sequence — recommended with `--enforcement-mode DoNotEnforce` first to check for false positives (see the tag-policy's NIC-resource caveat) before switching to `Default`. |
+| 2026-08-11 | **H-3 public-network-access policy not implemented.** SAD §16.2 also claims a policy blocks public network access on AI services "by default" — out of scope for this pass (task specified exactly three definitions: region, GlobalStandard, tags). `publicNetworkAccess: 'Disabled'` is enforced only as a Bicep property today, verified set on all AI/data resources but not policy-backstopped. | Same class of risk as the other three findings, just not yet closed. | A fourth `infra/policy/` definition using the verified alias `Microsoft.CognitiveServices/accounts/publicNetworkAccess` (and equivalents for Cosmos/Storage/Search/Key Vault), added in a dedicated follow-up pass. |
+| 2026-08-11 | **H-5 HTTP 5xx alert depends on SR-010 telemetry, which was uncommitted at deploy time.** `alert-http5xx-val1` (`Microsoft.Insights/scheduledQueryRules`, deployed live to val1) queries Application Insights' `requests` table — verified via `git status` at the time of this deployment that `src/instrumentation.ts` (the OpenTelemetry/Azure Monitor SDK wiring that would populate that table) exists in the working tree but is **uncommitted**, so it was not part of any deployed build as of this alert's creation. | The alert resource exists and is enabled, but has no data to evaluate until SR-010 is committed, deployed, and actually emitting request telemetry. Do not treat "alert exists" as "alert is proven to fire correctly." | SR-010 is committed and deployed to val1; re-verify by generating a deliberate 5xx (or checking `requests` table population) and confirming the alert's query returns real data. |
+| 2026-08-11 | **H-5 Cosmos "RU/s" and Cost "150%/day" alerts are documented interpretations, not literal implementations.** No Azure Monitor metric named "RU/s" exists on Cosmos DB (verified via `az monitor metrics list-definitions`) — implemented as a count of `TotalRequests` with `StatusCode=429` instead. No "Daily" `timeGrain` exists on `Microsoft.Consumption/budgets` (Monthly/Quarterly/Annually/BillingMonth/BillingQuarter/BillingAnnual only) — implemented as a Monthly budget with a 150%-of-baseline notification instead of a true daily-anomaly detector. | Both alerts are real, deployed, and will fire — just not on the exact literal metric the SAD's wording implies. A reviewer comparing SAD §31.2 wording to the deployed resource type should not conclude either is "wrong" without reading `infra/modules/alerts.bicep`'s comments first. | A true daily-level cost anomaly detector is wanted: configure Azure Cost Management's native Anomaly Alert feature (subscription/billing-account scope, portal/API-configured — not a per-resource-group Bicep resource) as a separate, deliberate follow-up. |
+| 2026-08-11 | **H-2 SCM/Kudu hardening deferred.** `modules/app-service.bicep` deliberately does NOT restrict the SCM/Kudu deployment endpoint (`*.scm.azurewebsites.net`) to Cloudflare IPs — Cloudflare doesn't proxy that hostname, so doing so would break `az webapp deploy` and the future `provision-customer.yml` GitHub Actions pipeline, not just tighten security. `scmIpSecurityRestrictionsUseMain` is explicitly set `false` (matches prior/current live behavior — verified via `az webapp config show` before deploying). | SCM/Kudu remains open to the internet for every customer, including production. | A dedicated pass adds GitHub Actions' published IP ranges (large, rotate more often than Cloudflare's) as an SCM allow-list, per the SAD decisions-log's stated target state — track as a separate ticket, do not silently reuse the Cloudflare list. |
 
 ## Provisioning pipeline (2026-07-30)
 - Key Vault cert escrow from GitHub-hosted runners cannot reach private-endpoint-only customer Key Vaults; PFX bind works directly, escrow is best-effort with warning. Revisit if CLOUDFLARE_ORIGIN_CA_KEY is provided (options: deploymentScripts in VNet, scoped temporary exception, self-hosted runner).
@@ -91,45 +97,66 @@ Full writeup: `docs/gdpr-erasure-evidence.md`. `EraseDataSubject`/`cosmos-retent
 against the live `rg-azurechat-val1` stack (`az` read-only queries, subscription "Azure
 subscription 1") surfaced gaps not previously documented:
 
-- **Cosmos DB is on default Periodic backup (4h interval / 8h retention), not the Continuous
-  Backup the SAD "decided" on.** SAD §22.1 states Continuous Backup (`Continuous30Days`) via a
-  `enableContinuousBackup bool = true` Bicep parameter was the accepted decision for Phase B
-  onward. That parameter does not exist anywhere in this repo, and `infra/modules/cosmos-db.bicep`
-  sets no `backupPolicy` at all — confirmed live via `az cosmosdb show --name
-  cosmos-azurechat-val1 --resource-group rg-azurechat-val1` (`"type": "Periodic",
-  "backupIntervalInMinutes": 240, "backupRetentionIntervalInHours": 8`). An erased Cosmos document
-  can still be recovered from an existing periodic backup for up to ~8-12 hours after erasure,
-  and only via an Azure Support ticket (no self-service point-in-time restore, unlike what
-  Continuous Backup would have provided). Revisit: add `enableContinuousBackup`/`backupPolicy` to
-  `cosmos-db.bicep` per the SAD's own decision, or formally revise §22.1 to describe what's
-  actually deployed.
-- **The `enableZeroDataRetention` Bicep parameter (`infra/main.bicep:42`) is dead code.** It is
-  declared with the SAD-described default (`false`) but is never passed into
-  `modules/openai.bicep`'s module call, and that module has no parameter or resource property
-  connected to it (verified by tracing `infra/main.bicep`'s `openAiModule` block and grepping
-  `modules/openai.bicep` for any ZDR/abuse-monitoring property). Flipping the parameter to `true`
-  today would do nothing. Live `oai-azurechat-val1` has `raiMonitorConfig: null` (Microsoft default
-  abuse-monitoring, unmodified) confirmed via `az cognitiveservices account show`. Real consequence:
-  every prompt/completion sent through this account can be retained by Microsoft for up to 30 days
-  for abuse-monitoring, with no code path in this repo to change that even after a hypothetical ZDR
-  approval. Revisit: either wire the parameter to a real ZDR-relevant property once Microsoft's
-  Limited Access Program approval is actually pursued, or remove the parameter so it stops implying
-  a control that doesn't exist.
-- **The commit-`d6fe070` blob lifecycle policy (`infra/modules/storage.bicep`,
-  `delete-images-after-90-days`) is not yet deployed to `rg-azurechat-val1`.** Confirmed via
-  `az storage account management-policy show --account-name stval136sepgklp44gk
-  --resource-group rg-azurechat-val1` → `ManagementPolicyNotFound`. The last `deploy-storage-val1`
-  run (`az deployment group list -g rg-azurechat-val1`) completed 2026-07-30T16:34:41Z, before
-  `d6fe070` was committed (2026-07-31T09:11:30+02:00). Revisit: re-run the storage deployment for
-  val1 (and any other already-provisioned customer stack) to pick up the lifecycle policy —
-  otherwise the 90-day backstop for un-erased chat-image blobs silently does not apply anywhere yet.
-- **Blob soft delete, container soft delete, and blob versioning are all disabled** on the live
-  `stval136sepgklp44gk` account (`deleteRetentionPolicy.enabled: false`,
-  `containerDeleteRetentionPolicy: null`, `isVersioningEnabled: null` — `az storage account
-  blob-service-properties show`). Not necessarily wrong (it means a hard delete is genuinely final,
-  which is erasure-friendly), but it was never a deliberate documented decision and means there is
-  currently zero accidental-deletion recovery window for this storage account. Revisit if/when a
-  storage-resilience pass happens.
+- **RESOLVED 2026-08-11 (SR-007, Cosmos backup half).** Cosmos DB was on the RP's default
+  Periodic backup (4h interval / 8h retention), not the Continuous Backup SAD §22.1 "decided" on
+  via a never-implemented `enableContinuousBackup bool = true` parameter — confirmed live before
+  the fix via `az cosmosdb show` (`"type": "Periodic", "backupIntervalInMinutes": 240,
+  "backupRetentionIntervalInHours": 8`). Fixed: `enableContinuousBackup` (default `true`) now
+  exists in `infra/main.bicep` and `infra/modules/cosmos-db.bicep`, wired to
+  `cosmosAccount.properties.backupPolicy`. `cosmos-azurechat-val1` was migrated live 2026-08-11 via
+  `az cosmosdb update --backup-policy-type Continuous --continuous-tier Continuous30Days` — verified
+  in-place (`Modify`, not delete/recreate) via `az deployment group what-if` beforehand, and
+  confirmed via before/after `az cosmosdb show` diff that `disableLocalAuth`,
+  `publicNetworkAccess`, `enableAutomaticFailover`, private endpoints, tags, and region were all
+  unchanged. **This migration is one-way** — Continuous cannot be moved back to Periodic on this
+  account. See `docs/deployment-record.md` (2026-08-11) for the full evidence and SAD §22.1/§22.3
+  for the corrected text.
+- **RESOLVED 2026-08-11 (SR-006).** The dead `enableZeroDataRetention` Bicep parameter (was
+  `infra/main.bicep:42`) has been **removed** — decision (b) of the two options this entry
+  originally offered, because Azure OpenAI ZDR has no ARM/Bicep-settable property in any API
+  version this repo uses; it is an account-level grant Microsoft applies out-of-band after a
+  Limited Access Program approval (1-4 weeks), so there was nothing to "wire" — only a dead
+  parameter to remove. Removed from `infra/main.bicep`, `infra/environments/example.bicepparam`,
+  `infra/environments/validation.bicepparam`; SAD §6.5/§16.3 and the decisions-log rows corrected
+  to stop claiming ZDR is "Bicep-parameter klar fra dag 1." `infra/main.bicep` now carries a dated
+  comment explaining what would need to be true before any ZDR-related code is re-added. Live
+  `oai-azurechat-val1` is unaffected by this change (the parameter never controlled anything) and
+  still has `raiMonitorConfig: null` (Microsoft standard abuse-monitoring, up to 30 days) — this is
+  the actual, undiminished retention exposure and remains open, tracked as a real (not code)
+  limitation below. No customer has ever been sold ZDR; no re-verification against a live approved
+  account is possible until one exists. See `docs/gdpr-erasure-evidence.md` §6 for the original
+  trace and `docs/deployment-record.md` (2026-08-11 section) for the change record.
+- **Azure OpenAI abuse-monitoring retention (up to 30 days, Microsoft-side) remains real and
+  unmitigated for every customer account today.** This is not a bug in this repo — there is
+  currently no product mechanism (Bicep, app code, or otherwise) that changes it short of an actual
+  Microsoft ZDR approval per customer account. Disclose this explicitly to any customer whose legal
+  team reviews the erasure/retention story (see the entry below and `docs/gdpr-erasure-evidence.md`).
+  Revisit: if/when a customer's ZDR Limited Access Program application is submitted and approved,
+  confirm via `az cognitiveservices account show` what (if anything) changes on the resource, and
+  document that as the first real, verified ZDR implementation — do not pre-emptively add Bicep for
+  it before an approval exists to test against.
+- **RESOLVED (confirmed 2026-08-11, deployed sometime between 2026-07-31 and 2026-08-10 — exact
+  date/actor not tracked here).** The commit-`d6fe070` blob lifecycle policy
+  (`infra/modules/storage.bicep`, `delete-images-after-90-days`) was previously not deployed to
+  `rg-azurechat-val1` (`ManagementPolicyNotFound` as of 2026-07-31). Re-checked live 2026-08-11 as
+  part of SR-007: `az storage account management-policy show --account-name stval136sepgklp44gk
+  --resource-group rg-azurechat-val1` now returns the policy, `lastModifiedTime:
+  2026-08-10T14:39:02Z`, matching committed source exactly (`delete-images-after-90-days`, prefix
+  `images/`, 90 days). No action needed — already closed by the time this SR-007 pass started.
+- **RESOLVED 2026-08-11 (SR-007, blob soft delete half).** Blob soft delete, container soft
+  delete, and blob versioning were all disabled on the live `stval136sepgklp44gk` account
+  (`deleteRetentionPolicy.enabled: false`, `containerDeleteRetentionPolicy: null`,
+  `isVersioningEnabled: null`), never a deliberate documented decision. Fixed: `modules/
+  storage.bicep` now sets `deleteRetentionPolicy: { enabled: true, days: 7 }` explicitly via a new
+  `blobSoftDeleteRetentionDays` param (default 7), deployed live to `stval136sepgklp44gk`
+  2026-08-11 (`az deployment group what-if` confirmed an isolated, additive `Modify` — no other
+  storage-account property touched — before deploying; post-deploy `az storage account
+  blob-service-properties show` confirms `enabled: true, days: 7`). **GDPR tension, stated
+  explicitly:** `EraseDataSubject` (`eraseBlobsForThreads`) hard-deletes image blobs on request,
+  but with soft delete on, Azure retains a recoverable copy for this 7-day window before the blob
+  is permanently purged — see `docs/gdpr-erasure-evidence.md` for the updated retention-chain
+  statement. **Container soft delete and blob versioning remain deliberately disabled** — out of
+  this fix's scope; revisit only as part of a dedicated storage-resilience pass, not silently.
 - **Azure OpenAI abuse-monitoring (up to 30 days, Microsoft-side) is the single largest
   undisclosed retention exposure found in this review.** It is outside `EraseDataSubject`'s reach
   entirely, is not mentioned in `docs/gdpr-erasure-evidence.md`'s predecessor documents as a live

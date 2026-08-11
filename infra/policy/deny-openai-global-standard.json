@@ -1,0 +1,56 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "1874937964750294688"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/policyDefinitions",
+      "apiVersion": "2021-06-01",
+      "name": "sales-prism-deny-openai-globalstandard",
+      "properties": {
+        "displayName": "Sales Prism — deny GlobalStandard SKU on Azure OpenAI deployments",
+        "description": "GDPR R2 / SAD §16.2. Denies creation or update of any Microsoft.CognitiveServices/accounts/deployments resource with sku.name = GlobalStandard. DataZoneStandard is the only permitted deployment SKU for Azure OpenAI in this subscription. Subscription-level backstop for the @allowed(['DataZoneStandard']) decorators in infra/main.bicep and infra/modules/openai.bicep.",
+        "policyType": "Custom",
+        "mode": "Indexed",
+        "metadata": {
+          "category": "Sales Prism",
+          "version": "1.0.0",
+          "source": "infra/policy/deny-openai-global-standard.bicep — H-3, 2026-08-11"
+        },
+        "policyRule": {
+          "if": {
+            "allOf": [
+              {
+                "field": "type",
+                "equals": "Microsoft.CognitiveServices/accounts/deployments"
+              },
+              {
+                "field": "Microsoft.CognitiveServices/accounts/deployments/sku.name",
+                "equals": "GlobalStandard"
+              }
+            ]
+          },
+          "then": {
+            "effect": "deny"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "policyDefinitionId": {
+      "type": "string",
+      "value": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'sales-prism-deny-openai-globalstandard')]"
+    },
+    "policyDefinitionName": {
+      "type": "string",
+      "value": "sales-prism-deny-openai-globalstandard"
+    }
+  }
+}

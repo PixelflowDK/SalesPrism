@@ -7,6 +7,23 @@ param tags object
 @description('Zone redundancy for the Cosmos account. Default false per SAD §34.5 (single-region MVP); westeurope zonal capacity is also frequently constrained.')
 param enableZoneRedundancy bool = false
 
+// ---------------------------------------------------------------------------
+// SR-007 (2026-08-11) — backup policy. SAD §22.1 decided Continuous Backup
+// (Continuous30Days, self-service point-in-time restore) for Phase B onward,
+// naming a Bicep parameter `enableContinuousBackup` that never existed in this
+// module — the account silently ran on the RP's Periodic default (240min
+// interval / 8h retention, support-ticket-only restore) instead. This wires
+// the SAD's own decision. Default true (Continuous) for all new deployments.
+// Existing accounts: periodic-to-continuous migration is supported in place
+// by the RP (verified via `az cosmosdb update --backup-policy-type Continuous
+// --continuous-tier Continuous30Days` and a `what-if` Modify-only diff before
+// this was applied to val1 — see docs/deployment-record.md 2026-08-11) but is
+// ONE-WAY: once migrated, an account cannot be moved back to Periodic. Set
+// `false` only for an account that must stay Periodic for a documented reason.
+// ---------------------------------------------------------------------------
+@description('SAD §22.1 — Continuous Backup (point-in-time restore, self-service, 30-day window) vs. Periodic (240min interval, 8h retention, Azure Support restore only). Continuous is the decided default; migration from Periodic is one-way.')
+param enableContinuousBackup bool = true
+
 @description('SQL API database name. Must match src/features/common/services/cosmos.ts AZURE_COSMOSDB_DB_NAME default ("chat") — app-service.bicep does not currently set that app setting, so the code default is authoritative.')
 param databaseName string = 'chat'
 
@@ -23,6 +40,20 @@ var historyContainerDefaultTtl = 7776000 // 90 days — CHAT_HISTORY_TTL_SECONDS
 var configContainerDefaultTtl = -1
 
 var accountName = 'cosmos-azurechat-${customerSlug}'
+
+var backupPolicy = enableContinuousBackup ? {
+  type: 'Continuous'
+  continuousModeProperties: {
+    tier: 'Continuous30Days'
+  }
+} : {
+  type: 'Periodic'
+  periodicModeProperties: {
+    backupIntervalInMinutes: 240
+    backupRetentionIntervalInHours: 8
+    backupStorageRedundancy: 'Geo'
+  }
+}
 
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview' = {
   name: accountName
@@ -50,6 +81,11 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview
     // left as-is. Without this, adding disableLocalAuth here would silently
     // flip the live enableAutomaticFailover (currently true) to false.
     enableAutomaticFailover: true
+    // SR-007 — explicit backupPolicy (see enableContinuousBackup above). This
+    // property was previously omitted entirely, which is why the RP silently
+    // defaulted every account to Periodic/240min/8h regardless of the SAD's
+    // documented Continuous decision.
+    backupPolicy: backupPolicy
   }
 }
 

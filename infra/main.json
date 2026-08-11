@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "2063001925011272680"
+      "templateHash": "12216750261143478025"
     }
   },
   "parameters": {
@@ -39,6 +39,13 @@
       ],
       "metadata": {
         "description": "Region for the Cosmos DB account only. Defaults to azureRegion; override when the primary region has Cosmos capacity constraints (both values remain EU per R1)."
+      }
+    },
+    "enableContinuousBackup": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "SAD §22.1 (SR-007) — Continuous Backup (point-in-time restore, self-service) vs. Periodic (240min/8h, Azure Support restore only). Continuous is the decided default. Migrating an existing account from Periodic to Continuous is supported in place but is one-way — see modules/cosmos-db.bicep header."
       }
     },
     "aiRegion": {
@@ -80,9 +87,26 @@
         "standard"
       ]
     },
-    "enableZeroDataRetention": {
+    "restrictIngressToCloudflare": {
       "type": "bool",
-      "defaultValue": false
+      "defaultValue": true,
+      "metadata": {
+        "description": "H-2 — restrict App Service ingress to Cloudflare IP ranges only. Default true for all customers; must be false ONLY for the documented val1 exception (unproxied, App Service-managed cert) — see modules/app-service.bicep header and docs/known-limitations.md. Never set false for a production customer."
+      }
+    },
+    "alertEmailAddress": {
+      "type": "string",
+      "defaultValue": "kontakt@pixelflow.dk",
+      "metadata": {
+        "description": "H-5 (SAD §31.2) — alert action group email receiver."
+      }
+    },
+    "monthlyBudgetAmount": {
+      "type": "int",
+      "defaultValue": 1000,
+      "metadata": {
+        "description": "H-5 (SAD §31.2) — monthly cost budget baseline for the Microsoft.Consumption/budgets alert, in the subscription billing currency. See modules/alerts.bicep for why this is monthly, not the SAD's literal daily-baseline wording."
+      }
     },
     "environmentTag": {
       "type": "string",
@@ -317,7 +341,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "2745354425603094309"
+              "templateHash": "4485051071132599490"
             }
           },
           "parameters": {
@@ -413,7 +437,8 @@
               },
               "properties": {
                 "publicNetworkAccess": "Disabled",
-                "customSubDomainName": "[variables('accountName')]"
+                "customSubDomainName": "[variables('accountName')]",
+                "disableLocalAuth": true
               }
             },
             {
@@ -476,6 +501,10 @@
             "embeddingModelDeploymentName": {
               "type": "string",
               "value": "[parameters('embeddingModelName')]"
+            },
+            "chatModelCapacity": {
+              "type": "int",
+              "value": "[variables('selectedChatModel').capacity]"
             }
           }
         }
@@ -515,7 +544,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "12450585898298150131"
+              "templateHash": "5847291954271364562"
             }
           },
           "parameters": {
@@ -552,7 +581,9 @@
               "properties": {
                 "replicaCount": 1,
                 "partitionCount": 1,
-                "publicNetworkAccess": "disabled"
+                "publicNetworkAccess": "disabled",
+                "disableLocalAuth": true,
+                "semanticSearch": "free"
               }
             }
           ],
@@ -595,6 +626,9 @@
           },
           "tags": {
             "value": "[variables('tags')]"
+          },
+          "enableContinuousBackup": {
+            "value": "[parameters('enableContinuousBackup')]"
           }
         },
         "template": {
@@ -604,7 +638,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "9714801105219030341"
+              "templateHash": "9211950619003054175"
             }
           },
           "parameters": {
@@ -623,10 +657,41 @@
               "metadata": {
                 "description": "Zone redundancy for the Cosmos account. Default false per SAD §34.5 (single-region MVP); westeurope zonal capacity is also frequently constrained."
               }
+            },
+            "enableContinuousBackup": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "SAD §22.1 — Continuous Backup (point-in-time restore, self-service, 30-day window) vs. Periodic (240min interval, 8h retention, Azure Support restore only). Continuous is the decided default; migration from Periodic is one-way."
+              }
+            },
+            "databaseName": {
+              "type": "string",
+              "defaultValue": "chat",
+              "metadata": {
+                "description": "SQL API database name. Must match src/features/common/services/cosmos.ts AZURE_COSMOSDB_DB_NAME default (\"chat\") — app-service.bicep does not currently set that app setting, so the code default is authoritative."
+              }
+            },
+            "historyContainerName": {
+              "type": "string",
+              "defaultValue": "history",
+              "metadata": {
+                "description": "Chat-history container name. Must match cosmos.ts AZURE_COSMOSDB_CONTAINER_NAME default (\"history\"). Holds ChatThreadModel/ChatMessageModel/ChatDocumentModel/ChatCitationModel, partitioned on the end-user id."
+              }
+            },
+            "configContainerName": {
+              "type": "string",
+              "defaultValue": "config",
+              "metadata": {
+                "description": "Tenant-config container name. Must match cosmos.ts AZURE_COSMOSDB_CONFIG_CONTAINER_NAME default (\"config\"). Holds TenantTheme/ModuleConfig/UserAccount/CustomerEntity/MeetingBriefDocument/ActivityEvent/GDPR erasure audit records — all keyed, per established convention, on tenantSlug stored in the /userId path (never an end-user id)."
+              }
             }
           },
           "variables": {
-            "accountName": "[format('cosmos-azurechat-{0}', parameters('customerSlug'))]"
+            "historyContainerDefaultTtl": 7776000,
+            "configContainerDefaultTtl": -1,
+            "accountName": "[format('cosmos-azurechat-{0}', parameters('customerSlug'))]",
+            "backupPolicy": "[if(parameters('enableContinuousBackup'), createObject('type', 'Continuous', 'continuousModeProperties', createObject('tier', 'Continuous30Days')), createObject('type', 'Periodic', 'periodicModeProperties', createObject('backupIntervalInMinutes', 240, 'backupRetentionIntervalInHours', 8, 'backupStorageRedundancy', 'Geo')))]"
           },
           "resources": [
             {
@@ -651,7 +716,10 @@
                   }
                 ],
                 "publicNetworkAccess": "Disabled",
-                "disableKeyBasedMetadataWriteAccess": true
+                "disableKeyBasedMetadataWriteAccess": true,
+                "disableLocalAuth": true,
+                "enableAutomaticFailover": true,
+                "backupPolicy": "[variables('backupPolicy')]"
               }
             },
             {
@@ -666,6 +734,59 @@
               "dependsOn": [
                 "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('accountName'))]"
               ]
+            },
+            {
+              "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+              "apiVersion": "2024-02-15-preview",
+              "name": "[format('{0}/{1}', variables('accountName'), parameters('databaseName'))]",
+              "properties": {
+                "resource": {
+                  "id": "[parameters('databaseName')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+              "apiVersion": "2024-02-15-preview",
+              "name": "[format('{0}/{1}/{2}', variables('accountName'), parameters('databaseName'), parameters('historyContainerName'))]",
+              "properties": {
+                "resource": {
+                  "id": "[parameters('historyContainerName')]",
+                  "partitionKey": {
+                    "paths": [
+                      "/userId"
+                    ],
+                    "kind": "Hash"
+                  },
+                  "defaultTtl": "[variables('historyContainerDefaultTtl')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('accountName'), parameters('databaseName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+              "apiVersion": "2024-02-15-preview",
+              "name": "[format('{0}/{1}/{2}', variables('accountName'), parameters('databaseName'), parameters('configContainerName'))]",
+              "properties": {
+                "resource": {
+                  "id": "[parameters('configContainerName')]",
+                  "partitionKey": {
+                    "paths": [
+                      "/userId"
+                    ],
+                    "kind": "Hash"
+                  },
+                  "defaultTtl": "[variables('configContainerDefaultTtl')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('accountName'), parameters('databaseName'))]"
+              ]
             }
           ],
           "outputs": {
@@ -676,6 +797,30 @@
             "cosmosEndpoint": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('accountName')), '2024-02-15-preview').documentEndpoint]"
+            },
+            "cosmosDatabaseId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('accountName'), parameters('databaseName'))]"
+            },
+            "cosmosDatabaseName": {
+              "type": "string",
+              "value": "[parameters('databaseName')]"
+            },
+            "cosmosHistoryContainerId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('accountName'), parameters('databaseName'), parameters('historyContainerName'))]"
+            },
+            "cosmosHistoryContainerName": {
+              "type": "string",
+              "value": "[parameters('historyContainerName')]"
+            },
+            "cosmosConfigContainerId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('accountName'), parameters('databaseName'), parameters('configContainerName'))]"
+            },
+            "cosmosConfigContainerName": {
+              "type": "string",
+              "value": "[parameters('configContainerName')]"
             }
           }
         }
@@ -797,7 +942,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "2200373591131099925"
+              "templateHash": "11621213968630560807"
             }
           },
           "parameters": {
@@ -809,6 +954,15 @@
             },
             "tags": {
               "type": "object"
+            },
+            "blobSoftDeleteRetentionDays": {
+              "type": "int",
+              "defaultValue": 7,
+              "minValue": 1,
+              "maxValue": 365,
+              "metadata": {
+                "description": "SR-007 — blob soft-delete retention window (days). GDPR tension: this many days after an erasure-triggered hard delete, the blob remains recoverable by Azure before being permanently purged. Keep in sync with docs/gdpr-erasure-evidence.md."
+              }
             }
           },
           "variables": {
@@ -829,7 +983,8 @@
                 "allowBlobPublicAccess": false,
                 "minimumTlsVersion": "TLS1_2",
                 "publicNetworkAccess": "Disabled",
-                "supportsHttpsTrafficOnly": true
+                "supportsHttpsTrafficOnly": true,
+                "allowSharedKeyAccess": false
               }
             },
             {
@@ -840,6 +995,56 @@
               "properties": {
                 "level": "CanNotDelete",
                 "notes": "Protect customer data from accidental deletion"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+              "properties": {
+                "deleteRetentionPolicy": {
+                  "enabled": true,
+                  "days": "[parameters('blobSoftDeleteRetentionDays')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/managementPolicies",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+              "properties": {
+                "policy": {
+                  "rules": [
+                    {
+                      "enabled": true,
+                      "name": "delete-images-after-90-days",
+                      "type": "Lifecycle",
+                      "definition": {
+                        "filters": {
+                          "blobTypes": [
+                            "blockBlob"
+                          ],
+                          "prefixMatch": [
+                            "images/"
+                          ]
+                        },
+                        "actions": {
+                          "baseBlob": {
+                            "delete": {
+                              "daysAfterModificationGreaterThan": 90
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
               },
               "dependsOn": [
                 "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
@@ -890,7 +1095,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "16978511372638804837"
+              "templateHash": "2001863300658197612"
             }
           },
           "parameters": {
@@ -920,7 +1125,8 @@
               },
               "properties": {
                 "publicNetworkAccess": "Disabled",
-                "customSubDomainName": "[variables('accountName')]"
+                "customSubDomainName": "[variables('accountName')]",
+                "disableLocalAuth": true
               }
             }
           ],
@@ -1840,6 +2046,9 @@
           "appServicePlanSku": {
             "value": "[parameters('appServiceSku')]"
           },
+          "restrictIngressToCloudflare": {
+            "value": "[parameters('restrictIngressToCloudflare')]"
+          },
           "integrationSubnetId": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-networking-{0}', parameters('customerSlug'))), '2025-04-01').outputs.integrationSubnetId.value]"
           },
@@ -1876,6 +2085,9 @@
           "keyVaultName": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug'))), '2025-04-01').outputs.keyVaultName.value]"
           },
+          "keyVaultUri": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-keyvault-{0}', parameters('customerSlug'))), '2025-04-01').outputs.keyVaultUri.value]"
+          },
           "storageAccountName": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug'))), '2025-04-01').outputs.storageName.value]"
           },
@@ -1902,7 +2114,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "1491133130818889353"
+              "templateHash": "8727954485209371346"
             }
           },
           "parameters": {
@@ -1981,6 +2193,12 @@
                 "description": "Key Vault name (NOT the endpoint URL) — key-vault.ts AZURE_KEY_VAULT_NAME."
               }
             },
+            "keyVaultUri": {
+              "type": "string",
+              "metadata": {
+                "description": "Key Vault URI (e.g. https://kv-azurechat-{slug}.vault.azure.net/) — SR-001: used to build Key Vault reference app-setting values below. Never a secret itself."
+              }
+            },
             "storageAccountName": {
               "type": "string",
               "metadata": {
@@ -2016,11 +2234,59 @@
               "metadata": {
                 "description": "Azure AI Speech account endpoint URL — proposed contract: AZURE_SPEECH_ENDPOINT."
               }
+            },
+            "restrictIngressToCloudflare": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "H-2 — restrict App Service ingress to Cloudflare IP ranges only (default-deny otherwise). Must be false only for an explicitly documented exception (see val1 in known-limitations.md); true for every production customer."
+              }
             }
           },
           "variables": {
+            "copy": [
+              {
+                "name": "cloudflareIpSecurityRestrictions",
+                "count": "[length(concat(variables('cloudflareIpv4Ranges'), variables('cloudflareIpv6Ranges')))]",
+                "input": {
+                  "ipAddress": "[concat(variables('cloudflareIpv4Ranges'), variables('cloudflareIpv6Ranges'))[copyIndex('cloudflareIpSecurityRestrictions')]]",
+                  "action": "Allow",
+                  "priority": "[add(100, copyIndex('cloudflareIpSecurityRestrictions'))]",
+                  "name": "[format('cloudflare-{0}', copyIndex('cloudflareIpSecurityRestrictions'))]",
+                  "description": "Cloudflare edge IP range — pinned 2026-08-11"
+                }
+              }
+            ],
+            "cloudflareIpv4Ranges": [
+              "173.245.48.0/20",
+              "103.21.244.0/22",
+              "103.22.200.0/22",
+              "103.31.4.0/22",
+              "141.101.64.0/18",
+              "108.162.192.0/18",
+              "190.93.240.0/20",
+              "188.114.96.0/20",
+              "197.234.240.0/22",
+              "198.41.128.0/17",
+              "162.158.0.0/15",
+              "104.16.0.0/13",
+              "104.24.0.0/14",
+              "172.64.0.0/13",
+              "131.0.72.0/22"
+            ],
+            "cloudflareIpv6Ranges": [
+              "2400:cb00::/32",
+              "2606:4700::/32",
+              "2803:f800::/32",
+              "2405:b500::/32",
+              "2405:8100::/32",
+              "2a06:98c0::/29",
+              "2c0f:f248::/32"
+            ],
             "planName": "[format('plan-azurechat-{0}', parameters('customerSlug'))]",
             "appName": "[format('app-azurechat-{0}', parameters('customerSlug'))]",
+            "azureAdClientSecretKeyVaultRef": "[format('@Microsoft.KeyVault(SecretUri={0}secrets/azure-ad-client-secret/)', parameters('keyVaultUri'))]",
+            "nextAuthSecretKeyVaultRef": "[format('@Microsoft.KeyVault(SecretUri={0}secrets/nextauth-secret/)', parameters('keyVaultUri'))]",
             "nextAuthUrlPlaceholder": "[format('https://{0}.azurewebsites.net', variables('appName'))]"
           },
           "resources": [
@@ -2054,6 +2320,9 @@
                 "siteConfig": {
                   "linuxFxVersion": "NODE|22-lts",
                   "vnetRouteAllEnabled": true,
+                  "ipSecurityRestrictions": "[if(parameters('restrictIngressToCloudflare'), variables('cloudflareIpSecurityRestrictions'), createArray())]",
+                  "ipSecurityRestrictionsDefaultAction": "[if(parameters('restrictIngressToCloudflare'), 'Deny', 'Allow')]",
+                  "scmIpSecurityRestrictionsUseMain": false,
                   "appSettings": [
                     {
                       "name": "AZURE_OPENAI_API_INSTANCE_NAME",
@@ -2090,6 +2359,14 @@
                     {
                       "name": "AZURE_KEY_VAULT_NAME",
                       "value": "[parameters('keyVaultName')]"
+                    },
+                    {
+                      "name": "AZURE_AD_CLIENT_SECRET",
+                      "value": "[variables('azureAdClientSecretKeyVaultRef')]"
+                    },
+                    {
+                      "name": "NEXTAUTH_SECRET",
+                      "value": "[variables('nextAuthSecretKeyVaultRef')]"
                     },
                     {
                       "name": "AZURE_STORAGE_ACCOUNT_NAME",
@@ -2152,6 +2429,10 @@
             "appServiceHostname": {
               "type": "string",
               "value": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2023-01-01').defaultHostName]"
+            },
+            "appServicePlanId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]"
             }
           }
         }
@@ -2350,6 +2631,557 @@
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-speech-{0}', parameters('customerSlug')))]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-storage-{0}', parameters('customerSlug')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('deploy-alerts-{0}', parameters('customerSlug'))]",
+      "resourceGroup": "[variables('names').resourceGroup]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "customerSlug": {
+            "value": "[parameters('customerSlug')]"
+          },
+          "location": {
+            "value": "[parameters('azureRegion')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "alertEmailAddress": {
+            "value": "[parameters('alertEmailAddress')]"
+          },
+          "appServiceHostname": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-appservice-{0}', parameters('customerSlug'))), '2025-04-01').outputs.appServiceHostname.value]"
+          },
+          "appServicePlanId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-appservice-{0}', parameters('customerSlug'))), '2025-04-01').outputs.appServicePlanId.value]"
+          },
+          "appInsightsId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-observability-{0}', parameters('customerSlug'))), '2025-04-01').outputs.appInsightsId.value]"
+          },
+          "openAiId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.openAiId.value]"
+          },
+          "chatDeploymentName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.chatModelDeploymentName.value]"
+          },
+          "chatModelCapacity": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.chatModelCapacity.value]"
+          },
+          "embeddingDeploymentName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug'))), '2025-04-01').outputs.embeddingModelDeploymentName.value]"
+          },
+          "embeddingModelCapacity": {
+            "value": "[parameters('embeddingModelCapacity')]"
+          },
+          "cosmosId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug'))), '2025-04-01').outputs.cosmosId.value]"
+          },
+          "aiSearchId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug'))), '2025-04-01').outputs.aiSearchId.value]"
+          },
+          "monthlyBudgetAmount": {
+            "value": "[parameters('monthlyBudgetAmount')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "11647747235245843726"
+            }
+          },
+          "parameters": {
+            "customerSlug": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            },
+            "alertEmailAddress": {
+              "type": "string",
+              "defaultValue": "kontakt@pixelflow.dk",
+              "metadata": {
+                "description": "Action group email receiver. Default matches CLAUDE.md/task default."
+              }
+            },
+            "appServiceHostname": {
+              "type": "string",
+              "metadata": {
+                "description": "Microsoft.Web/sites resource id (app-azurechat-{slug}) — used for the availability webtest target URL."
+              }
+            },
+            "appServicePlanId": {
+              "type": "string",
+              "metadata": {
+                "description": "Microsoft.Web/serverfarms resource id (plan-azurechat-{slug}) — CPU alert scope."
+              }
+            },
+            "appInsightsId": {
+              "type": "string",
+              "metadata": {
+                "description": "Microsoft.Insights/components resource id (appi-azurechat-{slug}) — availability + HTTP 5xx log-query alert scope."
+              }
+            },
+            "openAiId": {
+              "type": "string",
+              "metadata": {
+                "description": "Microsoft.CognitiveServices/accounts resource id (oai-azurechat-{slug})."
+              }
+            },
+            "chatDeploymentName": {
+              "type": "string"
+            },
+            "chatModelCapacity": {
+              "type": "int",
+              "metadata": {
+                "description": "Chat model deployment capacity, 1K TPM units (modules/openai.bicep output)."
+              }
+            },
+            "embeddingDeploymentName": {
+              "type": "string"
+            },
+            "embeddingModelCapacity": {
+              "type": "int",
+              "metadata": {
+                "description": "Embedding model deployment capacity, 1K TPM units."
+              }
+            },
+            "cosmosId": {
+              "type": "string",
+              "metadata": {
+                "description": "Microsoft.DocumentDB/databaseAccounts resource id (cosmos-azurechat-{slug})."
+              }
+            },
+            "aiSearchId": {
+              "type": "string",
+              "metadata": {
+                "description": "Microsoft.Search/searchServices resource id (srch-azurechat-{slug})."
+              }
+            },
+            "monthlyBudgetAmount": {
+              "type": "int",
+              "defaultValue": 1000,
+              "metadata": {
+                "description": "SAD §17 monthly Azure cost estimate for this customer tier, in the subscription billing currency — used as the Microsoft.Consumption/budgets baseline. NOT a literal daily figure; see the budget resource comment below for why \"150% of daily baseline\" cannot be expressed natively as a per-resource-group ARM resource."
+              }
+            },
+            "budgetStartDate": {
+              "type": "string",
+              "defaultValue": "[utcNow('yyyy-MM-01')]",
+              "metadata": {
+                "description": "First day of the current month (yyyy-MM-01) — Microsoft.Consumption/budgets requires an explicit timePeriod.startDate and rejects inline utcNow() outside a parameter default."
+              }
+            }
+          },
+          "variables": {
+            "actionGroupName": "[format('ag-azurechat-{0}', parameters('customerSlug'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Insights/actionGroups",
+              "apiVersion": "2023-01-01",
+              "name": "[variables('actionGroupName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "groupShortName": "SalesPrism",
+                "enabled": true,
+                "emailReceivers": [
+                  {
+                    "name": "operator",
+                    "emailAddress": "[parameters('alertEmailAddress')]",
+                    "useCommonAlertSchema": true
+                  }
+                ]
+              }
+            },
+            {
+              "type": "Microsoft.Insights/webtests",
+              "apiVersion": "2022-06-15",
+              "name": "[format('webtest-availability-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject(format('hidden-link:{0}', parameters('appInsightsId')), 'Resource'))]",
+              "properties": {
+                "SyntheticMonitorId": "[format('webtest-availability-{0}', parameters('customerSlug'))]",
+                "Name": "[format('webtest-availability-{0}', parameters('customerSlug'))]",
+                "Enabled": true,
+                "Frequency": 300,
+                "Timeout": 30,
+                "Kind": "ping",
+                "RetryEnabled": true,
+                "Locations": [
+                  {
+                    "Id": "emea-nl-ams-azr"
+                  },
+                  {
+                    "Id": "emea-gb-db3-azr"
+                  }
+                ],
+                "Configuration": {
+                  "WebTest": "[format('<WebTest Name=\"webtest-availability-{0}\" Enabled=\"True\" CssProjectStructure=\"\" CssIteration=\"\" Timeout=\"30\" WorkItemIds=\"\" xmlns=\"http://microsoft.com/schemas/VisualStudio/TeamTest/2010\" Description=\"\" CredentialUserName=\"\" CredentialPassword=\"\" PreAuthenticate=\"True\" Proxy=\"default\" StopOnError=\"False\" RecordedResultFile=\"\" ResultsLocale=\"\"><Items><Request Method=\"GET\" Version=\"1.1\" Url=\"https://{1}/\" ThinkTime=\"0\" Timeout=\"30\" ParseDependentRequests=\"False\" FollowRedirects=\"True\" RecordResult=\"True\" Cache=\"False\" ResponseTimeGoal=\"0\" Encoding=\"utf-8\" ExpectedHttpStatusCode=\"200\" ExpectedResponseUrl=\"\" ReportingName=\"\" IgnoreHttpStatusCode=\"False\" /></Items></WebTest>', parameters('customerSlug'), parameters('appServiceHostname'))]"
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Insights/metricAlerts",
+              "apiVersion": "2018-03-01",
+              "name": "[format('alert-availability-{0}', parameters('customerSlug'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "description": "SAD §31.2 — App Service availability < 99% over 5 minutes (via Application Insights availability test).",
+                "severity": 1,
+                "enabled": true,
+                "scopes": [
+                  "[parameters('appInsightsId')]"
+                ],
+                "evaluationFrequency": "PT5M",
+                "windowSize": "PT5M",
+                "targetResourceType": "Microsoft.Insights/components",
+                "targetResourceRegion": "[parameters('location')]",
+                "criteria": {
+                  "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+                  "allOf": [
+                    {
+                      "criterionType": "StaticThresholdCriterion",
+                      "name": "AvailabilityBelow99",
+                      "metricNamespace": "Microsoft.Insights/components",
+                      "metricName": "availabilityResults/availabilityPercentage",
+                      "operator": "LessThan",
+                      "threshold": 99,
+                      "timeAggregation": "Average"
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]",
+                "[resourceId('Microsoft.Insights/webtests', format('webtest-availability-{0}', parameters('customerSlug')))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/scheduledQueryRules",
+              "apiVersion": "2022-06-15",
+              "name": "[format('alert-http5xx-{0}', parameters('customerSlug'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "description": "SAD §31.2 — HTTP 5xx rate > 5% over 5 minutes. Requires SR-010 telemetry (Application Insights requests table) to be flowing.",
+                "severity": 1,
+                "enabled": true,
+                "scopes": [
+                  "[parameters('appInsightsId')]"
+                ],
+                "evaluationFrequency": "PT5M",
+                "windowSize": "PT5M",
+                "criteria": {
+                  "allOf": [
+                    {
+                      "query": "requests | summarize total = count(), errors = countif(toint(resultCode) >= 500) | extend pct = iff(total == 0, 0.0, 100.0 * todouble(errors) / todouble(total)) | project pct",
+                      "timeAggregation": "Average",
+                      "metricMeasureColumn": "pct",
+                      "operator": "GreaterThan",
+                      "threshold": 5,
+                      "failingPeriods": {
+                        "numberOfEvaluationPeriods": 1,
+                        "minFailingPeriodsToAlert": 1
+                      }
+                    }
+                  ]
+                },
+                "actions": {
+                  "actionGroups": [
+                    "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/metricAlerts",
+              "apiVersion": "2018-03-01",
+              "name": "[format('alert-openai-quota-chat-{0}', parameters('customerSlug'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "description": "[format('SAD §31.2 — Azure OpenAI chat deployment ({0}) token usage > 80% of provisioned TPM over 5 minutes.', parameters('chatDeploymentName'))]",
+                "severity": 2,
+                "enabled": true,
+                "scopes": [
+                  "[parameters('openAiId')]"
+                ],
+                "evaluationFrequency": "PT5M",
+                "windowSize": "PT5M",
+                "criteria": {
+                  "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+                  "allOf": [
+                    {
+                      "criterionType": "StaticThresholdCriterion",
+                      "name": "ChatTokenQuota80Pct",
+                      "metricNamespace": "Microsoft.CognitiveServices/accounts",
+                      "metricName": "TokenTransaction",
+                      "dimensions": [
+                        {
+                          "name": "ModelDeploymentName",
+                          "operator": "Include",
+                          "values": [
+                            "[parameters('chatDeploymentName')]"
+                          ]
+                        }
+                      ],
+                      "operator": "GreaterThan",
+                      "threshold": "[mul(parameters('chatModelCapacity'), 4000)]",
+                      "timeAggregation": "Total"
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/metricAlerts",
+              "apiVersion": "2018-03-01",
+              "name": "[format('alert-openai-quota-embedding-{0}', parameters('customerSlug'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "description": "[format('SAD §31.2 — Azure OpenAI embedding deployment ({0}) token usage > 80% of provisioned TPM over 5 minutes.', parameters('embeddingDeploymentName'))]",
+                "severity": 2,
+                "enabled": true,
+                "scopes": [
+                  "[parameters('openAiId')]"
+                ],
+                "evaluationFrequency": "PT5M",
+                "windowSize": "PT5M",
+                "criteria": {
+                  "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+                  "allOf": [
+                    {
+                      "criterionType": "StaticThresholdCriterion",
+                      "name": "EmbeddingTokenQuota80Pct",
+                      "metricNamespace": "Microsoft.CognitiveServices/accounts",
+                      "metricName": "TokenTransaction",
+                      "dimensions": [
+                        {
+                          "name": "ModelDeploymentName",
+                          "operator": "Include",
+                          "values": [
+                            "[parameters('embeddingDeploymentName')]"
+                          ]
+                        }
+                      ],
+                      "operator": "GreaterThan",
+                      "threshold": "[mul(parameters('embeddingModelCapacity'), 4000)]",
+                      "timeAggregation": "Total"
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/metricAlerts",
+              "apiVersion": "2018-03-01",
+              "name": "[format('alert-cosmos-throttling-{0}', parameters('customerSlug'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "description": "SAD §31.2 — Cosmos DB throttling: > 10 requests with StatusCode 429 (TooManyRequests) over 5 minutes. Interpretation of \"RU/s\" — see module comment.",
+                "severity": 2,
+                "enabled": true,
+                "scopes": [
+                  "[parameters('cosmosId')]"
+                ],
+                "evaluationFrequency": "PT5M",
+                "windowSize": "PT5M",
+                "criteria": {
+                  "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+                  "allOf": [
+                    {
+                      "criterionType": "StaticThresholdCriterion",
+                      "name": "CosmosThrottledRequests",
+                      "metricNamespace": "Microsoft.DocumentDB/databaseAccounts",
+                      "metricName": "TotalRequests",
+                      "dimensions": [
+                        {
+                          "name": "StatusCode",
+                          "operator": "Include",
+                          "values": [
+                            "429"
+                          ]
+                        }
+                      ],
+                      "operator": "GreaterThan",
+                      "threshold": 10,
+                      "timeAggregation": "Count"
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/metricAlerts",
+              "apiVersion": "2018-03-01",
+              "name": "[format('alert-aisearch-throttling-{0}', parameters('customerSlug'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "description": "SAD §31.2 — AI Search throttled (503) query percentage > 5% over 5 minutes.",
+                "severity": 2,
+                "enabled": true,
+                "scopes": [
+                  "[parameters('aiSearchId')]"
+                ],
+                "evaluationFrequency": "PT5M",
+                "windowSize": "PT5M",
+                "criteria": {
+                  "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+                  "allOf": [
+                    {
+                      "criterionType": "StaticThresholdCriterion",
+                      "name": "ThrottledSearchQueriesAbove5Pct",
+                      "metricNamespace": "Microsoft.Search/searchServices",
+                      "metricName": "ThrottledSearchQueriesPercentage",
+                      "operator": "GreaterThan",
+                      "threshold": 5,
+                      "timeAggregation": "Average"
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/metricAlerts",
+              "apiVersion": "2018-03-01",
+              "name": "[format('alert-cpu-{0}', parameters('customerSlug'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "description": "SAD §31.2 — App Service Plan CPU > 85% over 10 minutes.",
+                "severity": 2,
+                "enabled": true,
+                "scopes": [
+                  "[parameters('appServicePlanId')]"
+                ],
+                "evaluationFrequency": "PT5M",
+                "windowSize": "PT10M",
+                "criteria": {
+                  "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+                  "allOf": [
+                    {
+                      "criterionType": "StaticThresholdCriterion",
+                      "name": "CpuAbove85Pct",
+                      "metricNamespace": "Microsoft.Web/serverfarms",
+                      "metricName": "CpuPercentage",
+                      "operator": "GreaterThan",
+                      "threshold": 85,
+                      "timeAggregation": "Average"
+                    }
+                  ]
+                },
+                "actions": [
+                  {
+                    "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Consumption/budgets",
+              "apiVersion": "2023-05-01",
+              "name": "[format('budget-azurechat-{0}', parameters('customerSlug'))]",
+              "properties": {
+                "category": "Cost",
+                "amount": "[parameters('monthlyBudgetAmount')]",
+                "timeGrain": "Monthly",
+                "timePeriod": {
+                  "startDate": "[parameters('budgetStartDate')]"
+                },
+                "notifications": {
+                  "actual_GreaterThan_150Pct": {
+                    "enabled": true,
+                    "operator": "GreaterThan",
+                    "threshold": 150,
+                    "thresholdType": "Actual",
+                    "contactEmails": [
+                      "[parameters('alertEmailAddress')]"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "actionGroupId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+            },
+            "availabilityWebTestId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Insights/webtests', format('webtest-availability-{0}', parameters('customerSlug')))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-aisearch-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-appservice-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-cosmos-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-observability-{0}', parameters('customerSlug')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('names').resourceGroup), 'Microsoft.Resources/deployments', format('deploy-openai-{0}', parameters('customerSlug')))]"
       ]
     }
   ],

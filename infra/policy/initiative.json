@@ -1,0 +1,78 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.43.8.12551",
+      "templateHash": "16050091766251681541"
+    }
+  },
+  "parameters": {
+    "allowedLocations": {
+      "type": "array",
+      "defaultValue": [
+        "northeurope",
+        "westeurope",
+        "swedencentral"
+      ]
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/policySetDefinitions",
+      "apiVersion": "2021-06-01",
+      "name": "sales-prism-guardrails",
+      "properties": {
+        "displayName": "Sales Prism — infrastructure guardrails (H-3)",
+        "description": "GDPR R1/R2 + tagging enforcement backstop for the Sales Prism ISV platform: denies non-EU regions, denies GlobalStandard Azure OpenAI deployments, and requires the four standard resource tags. Mirrors what SAD §16.2 already claims exists — this initiative is what makes that claim true.",
+        "policyType": "Custom",
+        "metadata": {
+          "category": "Sales Prism",
+          "version": "1.0.0",
+          "source": "infra/policy/initiative.bicep — H-3, 2026-08-11"
+        },
+        "parameters": {
+          "allowedLocations": {
+            "type": "Array",
+            "metadata": {
+              "displayName": "Allowed locations",
+              "description": "The list of locations that resources may be deployed into.",
+              "strongType": "location"
+            },
+            "defaultValue": "[parameters('allowedLocations')]"
+          }
+        },
+        "policyDefinitions": [
+          {
+            "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'sales-prism-deny-non-eu-region')]",
+            "policyDefinitionReferenceId": "denyNonEuRegion",
+            "parameters": {
+              "allowedLocations": {
+                "value": "[[parameters('allowedLocations')]"
+              }
+            }
+          },
+          {
+            "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'sales-prism-deny-openai-globalstandard')]",
+            "policyDefinitionReferenceId": "denyOpenAiGlobalStandard"
+          },
+          {
+            "policyDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/policyDefinitions', 'sales-prism-require-standard-tags')]",
+            "policyDefinitionReferenceId": "requireStandardTags"
+          }
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "initiativeId": {
+      "type": "string",
+      "value": "[subscriptionResourceId('Microsoft.Authorization/policySetDefinitions', 'sales-prism-guardrails')]"
+    },
+    "initiativeName": {
+      "type": "string",
+      "value": "sales-prism-guardrails"
+    }
+  }
+}

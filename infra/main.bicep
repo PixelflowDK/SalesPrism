@@ -16,6 +16,9 @@ param azureRegion string = 'northeurope'
 @allowed(['northeurope', 'westeurope', 'swedencentral'])  // swedencentral: ADR-002 EU-only capacity fallback, Cosmos only
 param cosmosRegion string = azureRegion
 
+@description('SAD §22.1 (SR-007) — Continuous Backup (point-in-time restore, self-service) vs. Periodic (240min/8h, Azure Support restore only). Continuous is the decided default. Migrating an existing account from Periodic to Continuous is supported in place but is one-way — see modules/cosmos-db.bicep header.')
+param enableContinuousBackup bool = true
+
 // ---------------------------------------------------------------------------
 // F1 (codex-review-1, finding 1) — AI region pinning.
 // Hard-pinned to westeurope per ADR-001 (2026-07-30): it is the only
@@ -39,7 +42,31 @@ param aiModelTier string = 'standard'
 @allowed(['basic', 'standard'])
 param aiSearchSku string = 'basic'
 
-param enableZeroDataRetention bool = false
+@description('H-2 — restrict App Service ingress to Cloudflare IP ranges only. Default true for all customers; must be false ONLY for the documented val1 exception (unproxied, App Service-managed cert) — see modules/app-service.bicep header and docs/known-limitations.md. Never set false for a production customer.')
+param restrictIngressToCloudflare bool = true
+
+@description('H-5 (SAD §31.2) — alert action group email receiver.')
+param alertEmailAddress string = 'kontakt@pixelflow.dk'
+
+@description('H-5 (SAD §31.2) — monthly cost budget baseline for the Microsoft.Consumption/budgets alert, in the subscription billing currency. See modules/alerts.bicep for why this is monthly, not the SAD\'s literal daily-baseline wording.')
+param monthlyBudgetAmount int = 1000
+
+// ---------------------------------------------------------------------------
+// SR-006 (2026-08-11) — `enableZeroDataRetention` REMOVED, not wired.
+// This parameter previously existed here (default false) but was never passed
+// to modules/openai.bicep, and no Microsoft.CognitiveServices/accounts property
+// in the API versions this repo uses implements ZDR — Azure OpenAI Zero Data
+// Retention is an account-level grant made by Microsoft after a Limited Access
+// Program application (1-4 weeks, out-of-band, no Bicep/ARM property to flip).
+// Shipping a Bicep parameter implied a deployable control that did not exist.
+// Do NOT re-add this parameter until: (1) the ZDR application has actually been
+// submitted and approved for a specific oai-azurechat-{slug} account, and
+// (2) Microsoft documents a concrete ARM property (or confirms none exists and
+// approval alone is sufficient) — re-verify via `az cognitiveservices account
+// show` on the approved account before wiring anything. See
+// docs/known-limitations.md (SR-006) and docs/gdpr-erasure-evidence.md §6 for
+// the full trace that established this was dead code.
+// ---------------------------------------------------------------------------
 
 @allowed(['production', 'validation'])
 @description('Deployment environment tag. "validation" is for internal test stacks only — never a paying customer.')
@@ -166,9 +193,10 @@ module cosmosModule 'modules/cosmos-db.bicep' = {
   scope: resourceGroup(names.resourceGroup)
   dependsOn: [rgModule]
   params: {
-    customerSlug: customerSlug
-    location:     cosmosRegion
-    tags:         tags
+    customerSlug:             customerSlug
+    location:                 cosmosRegion
+    tags:                     tags
+    enableContinuousBackup:   enableContinuousBackup
   }
 }
 
@@ -311,6 +339,7 @@ module appServiceModule 'modules/app-service.bicep' = {
     location:                      azureRegion
     tags:                          tags
     appServicePlanSku:             appServiceSku
+    restrictIngressToCloudflare:   restrictIngressToCloudflare
     integrationSubnetId:           networkingModule.outputs.integrationSubnetId
     appInsightsInstrumentationKey: observabilityModule.outputs.appInsightsInstrumentationKey
     appInsightsConnectionString:   observabilityModule.outputs.appInsightsConnectionString
@@ -323,6 +352,7 @@ module appServiceModule 'modules/app-service.bicep' = {
     searchIndexName:               searchIndexName
     cosmosDbUri:                   cosmosModule.outputs.cosmosEndpoint
     keyVaultName:                  keyVaultModule.outputs.keyVaultName
+    keyVaultUri:                   keyVaultModule.outputs.keyVaultUri
     storageAccountName:            storageModule.outputs.storageName
     documentIntelligenceEndpoint:  docIntelligenceModule.outputs.documentIntelligenceEndpoint
     tenantSlug:                    customerSlug
@@ -348,6 +378,33 @@ module rbacModule 'modules/rbac.bicep' = {
     storageId:               storageModule.outputs.storageId
     documentIntelligenceId:  docIntelligenceModule.outputs.documentIntelligenceId
     speechId:                speechModule.outputs.speechId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 9. Alerts — SAD §31.2 alert rules (H-5). Depends on App Service, all data
+// services, and observability (App Insights) already existing.
+// ---------------------------------------------------------------------------
+module alertsModule 'modules/alerts.bicep' = {
+  name: 'deploy-alerts-${customerSlug}'
+  scope: resourceGroup(names.resourceGroup)
+  dependsOn: [appServiceModule, openAiModule, cosmosModule, aiSearchModule, observabilityModule]
+  params: {
+    customerSlug:            customerSlug
+    location:                azureRegion
+    tags:                    tags
+    alertEmailAddress:       alertEmailAddress
+    appServiceHostname:      appServiceModule.outputs.appServiceHostname
+    appServicePlanId:        appServiceModule.outputs.appServicePlanId
+    appInsightsId:           observabilityModule.outputs.appInsightsId
+    openAiId:                openAiModule.outputs.openAiId
+    chatDeploymentName:      openAiModule.outputs.chatModelDeploymentName
+    chatModelCapacity:       openAiModule.outputs.chatModelCapacity
+    embeddingDeploymentName: openAiModule.outputs.embeddingModelDeploymentName
+    embeddingModelCapacity:  embeddingModelCapacity
+    cosmosId:                cosmosModule.outputs.cosmosId
+    aiSearchId:               aiSearchModule.outputs.aiSearchId
+    monthlyBudgetAmount:     monthlyBudgetAmount
   }
 }
 
