@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
@@ -64,6 +66,9 @@ import { ACTIVITY_EVENT_ATTRIBUTE } from "@/features/admin/activity-service";
 import { TAG_DIMENSIONS_ATTRIBUTE } from "@/features/admin/group-service";
 import { USER_ACCOUNT_ATTRIBUTE, UserAccount } from "@/features/admin/user-service";
 import { CUSTOMER_ENTITY_ATTRIBUTE, MEETING_BRIEF_ATTRIBUTE, MODULE_CONFIG_ATTRIBUTE } from "@/features/sales-coach/models";
+import { EXTENSION_ATTRIBUTE } from "@/features/extensions-page/extension-services/models";
+import { PERSONA_ATTRIBUTE } from "@/features/persona-page/persona-services/models";
+import { PROMPT_ATTRIBUTE } from "@/features/prompt-page/models";
 import { TENANT_THEME_ATTRIBUTE } from "@/features/theme/tenant-theme";
 import {
   ANONYMIZED_NOT_ERASED_DOCUMENT_TYPES,
@@ -109,22 +114,63 @@ const makeTypedQueryMock = (resultsByType: Record<string, { id: string }[]>) =>
     return { fetchAll: async () => ({ resources: resultsByType[type] ?? [] }) };
   });
 
+/**
+ * SR-013 — discovers every `*_ATTRIBUTE = "..."` constant declared under
+ * `src/features/`, by reading the source tree at test time.
+ *
+ * This replaces a hand-maintained literal list. That list was the bug: it
+ * omitted `PROMPT`, `PERSONA` and `EXTENSION` — the exact three types the
+ * erasure registry also omitted — so the test that the service's own module
+ * doc describes as failing "if a new store is added without erasure coverage"
+ * could not fail, because both sides of the comparison shared the same blind
+ * spot. A guard that has to be updated by the same person who forgot to
+ * update the thing it guards is not a guard.
+ *
+ * Reading the filesystem in a unit test is unusual and deliberate: the
+ * property under test is a claim about the WHOLE REPOSITORY ("every document
+ * type is classified"), and no set of imports can express that — an import
+ * list is just another hand-maintained list.
+ */
+const discoverAllAttributeConstants = (): Set<string> => {
+  const featuresDir = path.join(__dirname, "..");
+  const found = new Set<string>();
+
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+        continue;
+      }
+      if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".tsx")) continue;
+      if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) continue;
+
+      const source = fs.readFileSync(full, "utf8");
+      // `exec` in a loop rather than `matchAll` — the tsconfig target here
+      // predates the downlevel-iteration support `matchAll`'s iterator needs.
+      const pattern = /export const [A-Z0-9_]*_ATTRIBUTE\s*=\s*"([^"]+)"/g;
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(source)) !== null) {
+        found.add(match[1]);
+      }
+    }
+  };
+
+  walk(featuresDir);
+  return found;
+};
+
 describe("gdpr-erasure-service — store coverage registry (regression guard)", () => {
   it("classifies every known Cosmos document type into exactly one registry", () => {
-    const allKnownTypes = new Set<string>([
-      CHAT_THREAD_ATTRIBUTE,
-      MESSAGE_ATTRIBUTE,
-      CHAT_DOCUMENT_ATTRIBUTE,
-      CHAT_CITATION_ATTRIBUTE,
-      CUSTOMER_ENTITY_ATTRIBUTE,
-      MEETING_BRIEF_ATTRIBUTE,
-      MODULE_CONFIG_ATTRIBUTE,
-      ACTIVITY_EVENT_ATTRIBUTE,
-      TAG_DIMENSIONS_ATTRIBUTE,
-      USER_ACCOUNT_ATTRIBUTE,
-      TENANT_THEME_ATTRIBUTE,
-      GDPR_ERASURE_AUDIT_ATTRIBUTE,
-    ]);
+    const allKnownTypes = discoverAllAttributeConstants();
+
+    // Sanity-check the discovery itself. If a refactor renames the constant
+    // convention, `allKnownTypes` would silently shrink toward empty and the
+    // equality assertion below would start passing for the wrong reason —
+    // the classic way a self-discovering test rots into a no-op.
+    expect(allKnownTypes.size).toBeGreaterThanOrEqual(12);
+    expect(allKnownTypes.has(CHAT_THREAD_ATTRIBUTE)).toBe(true);
+    expect(allKnownTypes.has(USER_ACCOUNT_ATTRIBUTE)).toBe(true);
 
     const coveredTypes = new Set<string>([
       ...Object.values(ERASABLE_DOCUMENT_TYPES),
@@ -166,6 +212,9 @@ describe("EraseDataSubject", () => {
         [MESSAGE_ATTRIBUTE]: [{ id: "msg-1" }],
         [CHAT_DOCUMENT_ATTRIBUTE]: [{ id: "doc-1" }],
         [CHAT_CITATION_ATTRIBUTE]: [{ id: "cit-1" }, { id: "cit-2" }],
+        // SR-013 — types that were written but never erased until now.
+        [PERSONA_ATTRIBUTE]: [{ id: "persona-1" }, { id: "persona-2" }],
+        [EXTENSION_ATTRIBUTE]: [{ id: "ext-1" }],
       })
     );
     configQueryMock.mockImplementation(
@@ -173,6 +222,7 @@ describe("EraseDataSubject", () => {
         [CUSTOMER_ENTITY_ATTRIBUTE]: [{ id: "customer-1" }, { id: "customer-2" }],
         [MEETING_BRIEF_ATTRIBUTE]: [{ id: "brief-1" }],
         [ACTIVITY_EVENT_ATTRIBUTE]: [{ id: "evt-1" }, { id: "evt-2" }, { id: "evt-3" }],
+        [PROMPT_ATTRIBUTE]: [{ id: "prompt-1" }, { id: "prompt-2" }],
       })
     );
     configItemReadMock.mockResolvedValue({ resource: buildSubjectUserAccount() });
@@ -206,14 +256,17 @@ describe("EraseDataSubject", () => {
       customerEntities: 2,
       meetingBriefs: 1,
       activityEvents: 3,
+      prompts: 2,
+      personas: 2,
+      extensions: 1,
       searchIndexDocuments: 2,
       blobs: 3,
       userAccount: "anonymized",
     });
 
     // Every Cosmos document found across both containers was actually deleted.
-    expect(historyItemDeleteMock).toHaveBeenCalledTimes(6); // 2 threads + 1 msg + 1 doc + 2 citations
-    expect(configItemDeleteMock).toHaveBeenCalledTimes(6); // 2 customers + 1 brief + 3 activity events
+    expect(historyItemDeleteMock).toHaveBeenCalledTimes(9); // 2 threads + 1 msg + 1 doc + 2 citations + 2 personas + 1 extension
+    expect(configItemDeleteMock).toHaveBeenCalledTimes(8); // 2 customers + 1 brief + 3 activity events + 2 prompts
 
     // AI Search scoped by the subject's hashed id.
     expect(deleteDocumentsByUserMock).toHaveBeenCalledWith(SUBJECT_HASHED_ID);
@@ -243,12 +296,49 @@ describe("EraseDataSubject", () => {
       expect(options).toEqual({ partitionKey: SUBJECT_HASHED_ID });
     }
 
+    // `ConfigContainer` holds two different partitioning conventions, and both
+    // must be scoped to this subject alone. Asserting only the first shape (as
+    // this test originally did) would force any correct implementation of the
+    // second to look like a failure.
+    //
+    //   (a) tenant-partitioned  — SALES_COACH_* / ACTIVITY_EVENT carry a
+    //       `tenantSlug` partition key plus a separate owner field.
+    //   (b) subject-partitioned — PROMPT sets the partition key directly to
+    //       `currentUserId()`, with no `tenantSlug` field to filter on.
+    //
+    // Shape (b) is not a weaker guarantee: the canonical id is
+    // `${tenantId}:${oid}` (ADR-003), so the tenant is embedded in the
+    // partition key itself. A query pinned to that partition cannot reach
+    // another tenant's documents, let alone another user's.
     for (const call of configQueryMock.mock.calls) {
       const [querySpec, options] = call;
-      expect(findParam(querySpec, "@tenantSlug")).toBe(TENANT);
-      expect(findParam(querySpec, "@subjectId")).toBe(SUBJECT_HASHED_ID);
-      expect(options).toEqual({ partitionKey: TENANT });
+
+      const tenantPartitioned =
+        findParam(querySpec, "@tenantSlug") === TENANT &&
+        findParam(querySpec, "@subjectId") === SUBJECT_HASHED_ID &&
+        options?.partitionKey === TENANT;
+
+      const subjectPartitioned =
+        findParam(querySpec, "@userId") === SUBJECT_HASHED_ID &&
+        options?.partitionKey === SUBJECT_HASHED_ID;
+
+      expect(
+        tenantPartitioned || subjectPartitioned,
+        `ConfigContainer query for type ${String(
+          findParam(querySpec, "@type")
+        )} is scoped to neither the tenant+owner nor the subject partition: ${JSON.stringify(
+          { query: querySpec.query, options }
+        )}`
+      ).toBe(true);
     }
+
+    // And specifically: the subject-partitioned shape must still constrain the
+    // user in its SQL text, not lean on the partition key alone.
+    const promptCall = configQueryMock.mock.calls.find(
+      ([spec]) => findParam(spec, "@type") === PROMPT_ATTRIBUTE
+    );
+    expect(promptCall, "PROMPT documents must be queried for erasure").toBeDefined();
+    expect(promptCall?.[0].query).toMatch(/c\.userId=@userId/);
 
     // The raw SQL text itself must reference the scoping columns — a param
     // that's bound but never used in `query` would not actually scope
@@ -401,6 +491,9 @@ describe("EraseDataSubject — never-logged-in invitee (canonicalUserId: null)",
       customerEntities: 0,
       meetingBriefs: 0,
       activityEvents: 0,
+      prompts: 0,
+      personas: 0,
+      extensions: 0,
       searchIndexDocuments: 0,
       blobs: 0,
       userAccount: "anonymized",

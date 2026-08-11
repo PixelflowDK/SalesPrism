@@ -15,7 +15,11 @@ import {
   DeleteDocumentsByFileNameInThread,
   EnsureIndexIsCreated,
 } from "./azure-ai-search/azure-ai-search";
-import { CHAT_DOCUMENT_ATTRIBUTE, ChatDocumentModel } from "./models";
+import {
+  CHAT_DOCUMENT_ATTRIBUTE,
+  CHAT_THREAD_ATTRIBUTE,
+  ChatDocumentModel,
+} from "./models";
 
 const MAX_UPLOAD_DOCUMENT_SIZE: number = 20000000;
 const CHUNK_SIZE = 2300;
@@ -227,6 +231,41 @@ export const FindAllChatDocumentsForCurrentUser = async (): Promise<
  * Re-verifies `r.userId === callerId` server-side before doing either;
  * never trusts a client-supplied document id's ownership.
  */
+/**
+ * Does `chatThreadId` belong to `userId`?
+ *
+ * Exists because `DeleteDocumentsByFileNameInThread` deletes AI Search chunks
+ * by `chatThreadId + fileName` with NO `user` clause in its OData filter — its
+ * own doc comment states callers MUST have verified ownership first. That
+ * contract was being asserted rather than enforced.
+ *
+ * Deliberately a local query rather than an import of
+ * `FindChatThreadForCurrentUser`: `chat-thread-service.ts` already imports
+ * `FindAllChatDocuments` from THIS module, so importing back would create a
+ * cycle between two `"use server"` modules.
+ */
+const callerOwnsThread = async (
+  chatThreadId: string,
+  userId: string
+): Promise<boolean> => {
+  const querySpec: SqlQuerySpec = {
+    query:
+      "SELECT VALUE COUNT(1) FROM root r WHERE r.type=@type AND r.id=@id AND r.userId=@userId AND r.isDeleted=@isDeleted",
+    parameters: [
+      { name: "@type", value: CHAT_THREAD_ATTRIBUTE },
+      { name: "@id", value: chatThreadId },
+      { name: "@userId", value: userId },
+      { name: "@isDeleted", value: false },
+    ],
+  };
+
+  const { resources } = await HistoryContainer()
+    .items.query<number>(querySpec)
+    .fetchAll();
+
+  return (resources[0] ?? 0) > 0;
+};
+
 export const RemoveChatDocument = async (
   documentId: string
 ): Promise<ServerActionResponse<boolean>> => {
@@ -252,6 +291,20 @@ export const RemoveChatDocument = async (
       return { status: "NOT_FOUND", errors: [{ message: "Document not found." }] };
     }
 
+    // SR-011: the `r.userId === callerId` check above proves the caller owns
+    // this DOCUMENT ROW — which is not the same as owning the THREAD the row
+    // points at, and the AI Search delete below is scoped by thread, not by
+    // user. Without this second check an attacker could call
+    // `CreateChatDocument(victimFileName, victimThreadId)` to mint a row they
+    // legitimately own that points at someone else's thread, then delete it
+    // and take the victim's indexed RAG chunks with it.
+    if (!(await callerOwnsThread(document.chatThreadId, userId))) {
+      return {
+        status: "UNAUTHORIZED",
+        errors: [{ message: "Document does not belong to a thread you own." }],
+      };
+    }
+
     await HistoryContainer().items.upsert<ChatDocumentModel>({ ...document, isDeleted: true });
 
     await DeleteDocumentsByFileNameInThread(document.chatThreadId, document.name);
@@ -270,11 +323,27 @@ export const CreateChatDocument = async (
   chatThreadID: string
 ): Promise<ServerActionResponse<ChatDocumentModel>> => {
   try {
-    if (debug) console.log("CreateChatDocument: Creating document with fileName:", fileName, "chatThreadID:", chatThreadID);
+    const userId = await currentUserId();
+
+    // SR-011: `chatThreadID` is a client-supplied argument. This module carries
+    // the `"use server"` pragma, so every export here is an individually
+    // POST-able Server Action — being imported by an authenticated page grants
+    // no protection, and the uploader sources this value from React state that
+    // the client controls anyway. Setting `userId` from the session is not
+    // enough on its own: the row would be legitimately owned by the caller
+    // while pointing at another user's thread, which is exactly the primitive
+    // the deletion path in `RemoveChatDocument` can be turned against.
+    if (!(await callerOwnsThread(chatThreadID, userId))) {
+      return {
+        status: "UNAUTHORIZED",
+        errors: [{ message: "You do not own this conversation." }],
+      };
+    }
+
     const modelToSave: ChatDocumentModel = {
       chatThreadId: chatThreadID,
       id: uniqueId(),
-      userId: await currentUserId(),
+      userId,
       createdAt: new Date(),
       type: CHAT_DOCUMENT_ATTRIBUTE,
       isDeleted: false,

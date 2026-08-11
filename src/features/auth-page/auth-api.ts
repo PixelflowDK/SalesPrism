@@ -3,7 +3,8 @@ import AzureADProvider from "next-auth/providers/azure-ad";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GitHubProvider from "next-auth/providers/github";
 import { Provider } from "next-auth/providers/index";
-import { hashValue } from "./helpers";
+import { safeLog } from "@/features/common/services/safe-logger";
+import { buildCanonicalUserId, hashValue } from "./helpers";
 import { image } from "@markdoc/markdoc/dist/src/schema";
 import { access } from "fs";
 
@@ -52,7 +53,11 @@ const configureIdentityProvider = () => {
             isAdmin: false,
             image: image,
           };
-          console.log("GitHub profile:", newProfile);
+          // SR-012 — same leak as the Entra branch below: this logged the full
+          // GitHub profile including email and avatar. No canonical id exists
+          // for this provider (that is the whole point of the comment above),
+          // so there is nothing safe to correlate on beyond the event itself.
+          safeLog.info("auth.github.profile-mapped", { eventType: "login" });
           return newProfile;
         },
       })
@@ -135,7 +140,19 @@ const configureIdentityProvider = () => {
             isAdmin: isAdminOid(oid),
             image: image,
           };
-          console.log("Azure AD profile:", newProfile);
+          // SR-012: this was `console.log("Azure AD profile:", newProfile)`,
+          // which printed the ENTIRE ID-token claim set plus email, oid,
+          // tenant id and a base64 data-URL of the user's profile photo. That
+          // was inert while console output went nowhere durable — SR-010's
+          // OpenTelemetry `console` bridge changed that, and every sign-in
+          // then shipped that payload into Application Insights, which no
+          // erasure path reaches. Only the canonical id is logged now (an
+          // allow-listed field, and the same value already stored as the
+          // Cosmos partition key).
+          safeLog.info("auth.entra.profile-mapped", {
+            userId: buildCanonicalUserId(tid, oid),
+            eventType: "login",
+          });
           return newProfile;
         },
       })
@@ -179,11 +196,14 @@ const configureIdentityProvider = () => {
             isAdmin: isAdminOid(devOid),
             image: "",
           };
-          console.log(
-            "=== DEV USER LOGGED IN:\n",
-            JSON.stringify(user, null, 2,
-            )
-          );
+          // Dev-only provider (guarded by NODE_ENV === "development" above), so
+          // this never reaches a deployed environment's telemetry. Still routed
+          // through safeLog so the app has exactly one logging boundary and a
+          // future refactor cannot accidentally promote this to production.
+          safeLog.info("auth.dev-credentials.login", {
+            userId: buildCanonicalUserId(devTenantId, devOid),
+            eventType: "login",
+          });
           return user;
         },
       })
@@ -194,7 +214,6 @@ const configureIdentityProvider = () => {
 };
 
 export const fetchProfilePicture = async (profilePictureUrl: string, accessToken: any): Promise<any> => {
-  console.log("Fetching profile picture...");
   var image = null
   const profilePicture = await fetch(
     profilePictureUrl,
@@ -205,13 +224,17 @@ export const fetchProfilePicture = async (profilePictureUrl: string, accessToken
     }
   );
   if (profilePicture.ok) {
-    console.log("Profile picture fetched successfully.");
     const pictureBuffer = await profilePicture.arrayBuffer();
     const pictureBase64 = Buffer.from(pictureBuffer).toString("base64");
     image = `data:image/jpeg;base64,${pictureBase64}`;
   }
   else {
-    console.error("Failed to fetch profile picture:", profilePictureUrl, profilePicture.statusText);
+    // The URL is a per-user Graph endpoint and the status text is upstream
+    // prose — neither belongs in telemetry. The status code is enough to tell
+    // a 403 (missing User.Read consent) from a 404 (no photo set).
+    safeLog.warn("auth.profile-picture.fetch-failed", {
+      statusCode: profilePicture.status,
+    });
   }
   return image;
 };

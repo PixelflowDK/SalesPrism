@@ -19,6 +19,9 @@ import {
   MODULE_CONFIG_ATTRIBUTE,
 } from "@/features/sales-coach/models";
 import { TAG_DIMENSIONS_ATTRIBUTE } from "@/features/admin/group-service";
+import { EXTENSION_ATTRIBUTE } from "@/features/extensions-page/extension-services/models";
+import { PERSONA_ATTRIBUTE } from "@/features/persona-page/persona-services/models";
+import { PROMPT_ATTRIBUTE } from "@/features/prompt-page/models";
 import { TENANT_THEME_ATTRIBUTE } from "@/features/theme/tenant-theme";
 import { SqlQuerySpec } from "@azure/cosmos";
 import { z } from "zod";
@@ -53,6 +56,11 @@ import { FindUserById, UserAccount, UserAccountSchema, USER_ACCOUNT_ATTRIBUTE } 
  *   - Blob storage — the `images` container's multimodal chat-image blobs,
  *     keyed by `${chatThreadId}/${fileName}` (no user id in the blob path),
  *     resolved via the subject's own chat-thread ids.
+ *   - PERSONA / EXTENSION (`HistoryContainer`, upstream azurechat) — scoped
+ *     by `userId`, the partition key.
+ *   - PROMPT (`ConfigContainer`, upstream azurechat) — scoped by `userId`,
+ *     which for THIS type is the partition key itself, not a field beside a
+ *     `tenantSlug` partition. See `eraseConfigDocsByUserPartition`.
  *
  * ANONYMIZED_NOT_ERASED_DOCUMENT_TYPES — kept for audit, PII stripped:
  *   - USER_ACCOUNT (`ConfigContainer`, admin/user-service.ts) — per SAD
@@ -109,6 +117,26 @@ export const ERASABLE_DOCUMENT_TYPES = {
   customerEntities: CUSTOMER_ENTITY_ATTRIBUTE,
   meetingBriefs: MEETING_BRIEF_ATTRIBUTE,
   activityEvents: ACTIVITY_EVENT_ATTRIBUTE,
+  // SR-013 — three document types inherited from upstream azurechat that this
+  // registry missed for its entire existence. All three are written keyed to
+  // `currentUserId()` from live, reachable pages (/prompt, /persona,
+  // /extensions), so they are unambiguously the data subject's personal data.
+  //
+  // `PROMPT` was the worst of the three: it lives in `ConfigContainer`, whose
+  // `defaultTtl` is -1, so those documents were retained forever with no
+  // erasure path at all — an Art. 17 and an Art. 5(1)(e) problem at once.
+  // `PERSONA`/`EXTENSION` live in `HistoryContainer` and were being swept by
+  // its 90-day chat TTL, which meant they eventually vanished but could not be
+  // erased on request, and vanished for reasons nobody had designed.
+  //
+  // Note the side effect, which is correct but worth stating: a PUBLISHED
+  // persona or extension is erased along with its author. Art. 17 is about the
+  // author's data, and there is no basis for retaining it because colleagues
+  // found it useful. Tenants who need a shared persona to survive its author
+  // should own it under an admin/service account.
+  prompts: PROMPT_ATTRIBUTE,
+  personas: PERSONA_ATTRIBUTE,
+  extensions: EXTENSION_ATTRIBUTE,
 } as const;
 
 export const ANONYMIZED_NOT_ERASED_DOCUMENT_TYPES = {
@@ -130,6 +158,9 @@ export type ErasureCounts = {
   customerEntities: number;
   meetingBriefs: number;
   activityEvents: number;
+  prompts: number;
+  personas: number;
+  extensions: number;
   searchIndexDocuments: number;
   blobs: number;
   userAccount: "anonymized" | "error";
@@ -154,6 +185,9 @@ export const GdprErasureAuditRecordSchema = z.object({
     customerEntities: z.number().int().nonnegative(),
     meetingBriefs: z.number().int().nonnegative(),
     activityEvents: z.number().int().nonnegative(),
+    prompts: z.number().int().nonnegative(),
+    personas: z.number().int().nonnegative(),
+    extensions: z.number().int().nonnegative(),
     searchIndexDocuments: z.number().int().nonnegative(),
     blobs: z.number().int().nonnegative(),
     userAccount: z.enum(["anonymized", "error"]),
@@ -206,6 +240,49 @@ const findThreadIdsForSubject = async (subjectId: string): Promise<string[]> => 
     .items.query<{ id: string }>(querySpec, { partitionKey: subjectId })
     .fetchAll();
   return resources.map((r) => r.id);
+};
+
+/**
+ * Deletes every `ConfigContainer` document of `type` whose partition key IS the
+ * subject's canonical id.
+ *
+ * Distinct from `eraseConfigDocsByOwnerField` below, which partitions by
+ * `tenantSlug` and filters on a separate owner field. `PROMPT` documents follow
+ * the opposite convention — `prompt-service.ts` sets `userId` (the partition
+ * key) directly to `currentUserId()`, so there is no `tenantSlug` field to
+ * filter on. Using the tenant-partitioned helper for them would silently match
+ * nothing and report `deleted: 0` as success, which is exactly the shape of
+ * failure that let this type go unerased in the first place.
+ */
+const eraseConfigDocsByUserPartition = async (
+  type: string,
+  subjectId: string
+): Promise<number> => {
+  const container = ConfigContainer();
+  const querySpec: SqlQuerySpec = {
+    query: "SELECT c.id FROM root c WHERE c.type=@type AND c.userId=@userId",
+    parameters: [
+      { name: "@type", value: type },
+      { name: "@userId", value: subjectId },
+    ],
+  };
+
+  const { resources } = await container.items
+    .query<{ id: string }>(querySpec, { partitionKey: subjectId })
+    .fetchAll();
+
+  let deleted = 0;
+  for (const { id } of resources) {
+    try {
+      await container.item(id, subjectId).delete();
+      deleted++;
+    } catch (error) {
+      const code = (error as { code?: number })?.code;
+      if (code === 404) continue;
+      safeLog.error("gdpr.erasure.config-delete-failed", { errorCode: String(code ?? "unknown") });
+    }
+  }
+  return deleted;
 };
 
 /** Deletes every `ConfigContainer` document of `type`, in `tenantSlug`, whose `ownerFieldName` matches `subjectId`. Both tenantSlug AND the owner field are required — never drop either. */
@@ -387,6 +464,9 @@ export const EraseDataSubject = async (params: {
   let customerEntities = 0;
   let meetingBriefs = 0;
   let activityEvents = 0;
+  let prompts = 0;
+  let personas = 0;
+  let extensions = 0;
   let searchIndexDocuments = 0;
   let blobs = 0;
 
@@ -401,6 +481,9 @@ export const EraseDataSubject = async (params: {
       customerEntities,
       meetingBriefs,
       activityEvents,
+      prompts,
+      personas,
+      extensions,
       searchIndexDocuments,
       blobs,
     ] = await Promise.all([
@@ -426,6 +509,9 @@ export const EraseDataSubject = async (params: {
         "actorId",
         subjectId
       ),
+      eraseConfigDocsByUserPartition(ERASABLE_DOCUMENT_TYPES.prompts, subjectId),
+      eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.personas, subjectId),
+      eraseHistoryDocsByType(ERASABLE_DOCUMENT_TYPES.extensions, subjectId),
       eraseSearchIndexDocuments(subjectId),
       eraseBlobsForThreads(threadIds),
     ]);
@@ -441,6 +527,9 @@ export const EraseDataSubject = async (params: {
     customerEntities,
     meetingBriefs,
     activityEvents,
+    prompts,
+    personas,
+    extensions,
     searchIndexDocuments,
     blobs,
     userAccount,
