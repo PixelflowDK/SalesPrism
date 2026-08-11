@@ -3,6 +3,21 @@ const withPWA = require("@ducanh2912/next-pwa").default;
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  // Build provenance for /api/health (see src/app/api/health/route.ts).
+  //
+  // `env` INLINES these at build time, which is the entire point: they must
+  // travel inside the deployed artifact. An App Service app setting can be
+  // changed without redeploying, so a runtime-read value could truthfully
+  // report a commit that is not the one being served — exactly the
+  // "committed != deployed" confusion this is meant to make impossible.
+  //
+  // GITHUB_SHA is set by GitHub Actions; a local `npm run build` leaves both
+  // as "unknown", and the provisioning gate treats "unknown" as a FAILURE, so
+  // a locally built zip can never satisfy a provisioning run.
+  env: {
+    SALESPRISM_BUILD_SHA: (process.env.GITHUB_SHA || "unknown").slice(0, 7),
+    SALESPRISM_BUILD_TIME: new Date().toISOString(),
+  },
   // SR-003: `microsoft-cognitiveservices-speech-sdk` is now imported
   // server-side too (azure-speech.ts — transcribeAudio/synthesizeSpeech),
   // not just from client components. It ships a Node-specific websocket

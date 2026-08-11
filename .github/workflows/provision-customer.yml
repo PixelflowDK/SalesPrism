@@ -274,6 +274,39 @@ jobs:
           echo "Deployed resource group: $RG"
           echo "App Service hostname: $HOSTNAME"
 
+      # -----------------------------------------------------------------------
+      # HARD GATE — Cosmos schema (SR-009 regression guard)
+      #
+      # A successful `az deployment sub create` proves the ARM templates applied,
+      # NOT that the application's data layer exists. SR-009 is precisely that
+      # gap: infra/modules/cosmos-db.bicep provisioned only the Cosmos ACCOUNT
+      # for weeks. Every deployment "succeeded", the site returned HTTP 200, and
+      # the data layer was entirely absent — `az cosmosdb sql database list`
+      # returned `[]` and every page load logged `theme.get-failed`.
+      #
+      # This step re-asserts the database, both containers, their /userId
+      # partition keys, their TTLs, serverless throughput and the delete lock
+      # against the live account. It is deliberately placed INSIDE
+      # deploy-infrastructure and not in a later job: DNS, TLS and the app build
+      # are all wasted work if the data layer is missing, and a customer must
+      # never reach the URL stage of provisioning on a broken foundation.
+      #
+      # Non-zero exit fails the job. Do not add `continue-on-error`.
+      # -----------------------------------------------------------------------
+      - name: Gate — Cosmos schema verification (hard fail)
+        env:
+          RG: ${{ steps.names.outputs.resource_group }}
+          CUSTOMER_SLUG: ${{ inputs.customer_slug }}
+        run: |
+          set -euo pipefail
+          chmod +x infra/scripts/verify-cosmos-schema.sh
+          # -w is deliberately omitted here: the app has not been deployed yet at
+          # this point in the pipeline, so the optional managed-identity smoke
+          # check would fail for a reason unrelated to schema correctness. The
+          # end-to-end data-plane proof happens in configure-application's
+          # post-deployment gate instead.
+          infra/scripts/verify-cosmos-schema.sh -g "$RG" -s "$CUSTOMER_SLUG"
+
   # ---------------------------------------------------------------------------
   # Job 3 — configure-dns
   # Cloudflare API token is an encrypted repo secret (CLOUDFLARE_DNS_TOKEN,
@@ -293,11 +326,27 @@ jobs:
     outputs:
       record_base: ${{ steps.guard.outputs.record_base }}
       fqdn: ${{ steps.guard.outputs.fqdn }}
+    # Bound at JOB scope rather than written to $GITHUB_ENV from a `run:` body.
+    # The previous form (`echo "CF_TOKEN=${{ secrets.X }}" >> $GITHUB_ENV`) was
+    # the last remaining `${{ }}` expansion inside a shell body in this file —
+    # the exact shape of the C-1 injection class. A secret is set by the repo
+    # owner rather than an attacker, so this was low-risk, not no-risk: a token
+    # value containing a newline would have injected arbitrary environment
+    # variables into every later step. Job-level `env:` is expanded by the
+    # Actions runner, never by a shell, so no value can break out of its own
+    # binding. GitHub masks secret values in logs automatically, which is what
+    # the `::add-mask::` call was providing.
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_DNS_TOKEN }}
     steps:
-      - name: Load and mask Cloudflare token
+      - name: Verify Cloudflare token is configured
         run: |
-          echo "::add-mask::${{ secrets.CLOUDFLARE_DNS_TOKEN }}"
-          echo "CF_TOKEN=${{ secrets.CLOUDFLARE_DNS_TOKEN }}" >> "$GITHUB_ENV"
+          set -euo pipefail
+          if [ -z "${CF_TOKEN:-}" ]; then
+            echo "::error::CLOUDFLARE_DNS_TOKEN is not configured. DNS cannot be provisioned." >&2
+            exit 1
+          fi
+          echo "Cloudflare token present (value never printed)."
 
       - name: Guard — record name must match *-sales360 pattern
         id: guard
@@ -585,6 +634,101 @@ jobs:
             --name "$APP" \
             --src-path app.zip \
             --type zip
+
+      # -----------------------------------------------------------------------
+      # HARD GATE — the live site is serving THIS run's build
+      #
+      # `az webapp deploy` returning 0 means the zip was accepted by Kudu. It
+      # does NOT mean the worker restarted, that the new build boots, or that
+      # the site is serving it. This project has twice mistaken "committed" for
+      # "deployed" (18 commits sat undeployed for 11 days) and once mistaken a
+      # stale service-worker cache for a live response. Every one of those was
+      # a claim that no automated check could have made, because nothing ever
+      # asked the running instance what it was.
+      #
+      # /api/health reports a commit SHA INLINED AT BUILD TIME (next.config.js
+      # `env`), so it cannot be spoofed by an app setting and cannot drift from
+      # the artifact. Comparing it to this run's SHA is a true end-to-end proof:
+      # the response can only match if the zip built in this job is the code
+      # currently executing on the worker.
+      #
+      # Queried over the App Service DEFAULT hostname, not the customer FQDN —
+      # Cloudflare DNS/TLS may still be propagating at this point, and a
+      # proxied edge could serve a cached answer. `Cache-Control: no-store` on
+      # the route plus a direct-to-origin request keeps this honest.
+      #
+      # Non-zero exit fails the job. Do not add `continue-on-error`.
+      # -----------------------------------------------------------------------
+      - name: Gate — deployed build matches this run (hard fail)
+        env:
+          HOSTNAME: ${{ needs.deploy-infrastructure.outputs.app_service_hostname }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          EXPECTED_SHORT="${EXPECTED_SHA:0:7}"
+          HEALTH_URL="https://${HOSTNAME}/api/health"
+          echo "Expecting commit ${EXPECTED_SHORT} at ${HEALTH_URL}"
+
+          # A cold Next.js standalone start after a zip deploy is routinely
+          # 60-90s on B1/S1. 30 attempts x 10s = 5 minutes before giving up,
+          # which is generous enough that a timeout here means a real failure
+          # (crash loop, bad app setting, failed build) rather than slowness.
+          ATTEMPTS=30
+          for i in $(seq 1 "$ATTEMPTS"); do
+            BODY=$(curl -fsS --max-time 20 -H 'Cache-Control: no-cache' "$HEALTH_URL" 2>/dev/null || echo "")
+            LIVE_SHA=$(echo "$BODY" | jq -r '.commit // empty' 2>/dev/null || echo "")
+
+            if [ "$LIVE_SHA" = "$EXPECTED_SHORT" ]; then
+              echo "PASS: live build is ${LIVE_SHA} (attempt ${i})"
+              echo "$BODY"
+              exit 0
+            fi
+
+            # "unknown" means the artifact was built outside CI — a real defect
+            # (someone deployed a local build), never a transient state. Fail
+            # immediately rather than burning five minutes on it.
+            if [ "$LIVE_SHA" = "unknown" ]; then
+              echo "FAIL: live site reports build SHA 'unknown' — the deployed artifact was not built by CI." >&2
+              exit 1
+            fi
+
+            if [ -n "$LIVE_SHA" ]; then
+              echo "attempt ${i}/${ATTEMPTS}: serving ${LIVE_SHA}, waiting for ${EXPECTED_SHORT} (old worker still up)"
+            else
+              echo "attempt ${i}/${ATTEMPTS}: no health response yet"
+            fi
+            sleep 10
+          done
+
+          echo "FAIL: after $((ATTEMPTS * 10))s the site is not serving ${EXPECTED_SHORT}." >&2
+          echo "The zip deploy was accepted but the running instance never came up on the new build." >&2
+          echo "Check: az webapp log tail -g <rg> -n <app>" >&2
+          exit 1
+
+      # -----------------------------------------------------------------------
+      # HARD GATE — managed-identity data-plane reachability
+      #
+      # Complements the Cosmos SCHEMA gate in deploy-infrastructure, which can
+      # only read the ARM control plane (the runner has no route into the
+      # customer VNet). This one proves the path the schema gate cannot:
+      # App Service managed identity -> private endpoint -> Cosmos data plane.
+      #
+      # It works by hitting the app's own public root URL, which runs
+      # `EnsureTenantTheme` unauthenticated on every request (src/app/layout.tsx)
+      # and therefore performs a real authenticated Cosmos read/write from
+      # inside the VNet, then asserting no `theme.get-failed` was logged — the
+      # exact signal SR-009 produced for weeks while every provisioning run
+      # reported success.
+      # -----------------------------------------------------------------------
+      - name: Gate — managed-identity data-plane smoke test (hard fail)
+        env:
+          RG: ${{ needs.deploy-infrastructure.outputs.resource_group }}
+          APP: ${{ needs.deploy-infrastructure.outputs.app_service_name }}
+          CUSTOMER_SLUG: ${{ inputs.customer_slug }}
+        run: |
+          set -euo pipefail
+          chmod +x infra/scripts/verify-cosmos-schema.sh
+          infra/scripts/verify-cosmos-schema.sh -g "$RG" -s "$CUSTOMER_SLUG" -w "$APP"
 
   # ---------------------------------------------------------------------------
   # Job 5 — summary
