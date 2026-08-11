@@ -1,10 +1,11 @@
 {
-  "phase": "Stage 7 \u2014 review repair loops",
-  "lastCompletedTask": "C-1 CRITICAL workflow injection fixed (3c5e399); Codex round 2 fixed (d2f675a)",
+  "phase": "Autonomous product completion \u2014 Streams A (product UI) + B (SR-001/SR-010) running",
+  "lastCompletedTask": "Auth fixed end-to-end and verified live; feature-to-UI audit committed (f6bce2d)",
   "branch": "develop",
-  "lastStableCommit": "3c5e399",
+  "lastStableCommit": "f6bce2d",
   "activeAgents": [
-    "gdpr-erasure-worker"
+    "product-ui-worker (W1-W8)",
+    "infra-worker (SR-001 + SR-010)"
   ],
   "blockers": [
     "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large (operator portal request, 2-5 days)"
@@ -18,19 +19,36 @@
     "gpt-5-nano",
     "text-embedding-3-large"
   ],
-  "nextAction": "Integrate Phase F + test suite, then Stage 7 reviews (security/GDPR/compliance/cost/Codex re-review)",
+  "nextAction": "Integrate Stream A + B results, then Stream C blockers, data-plane matrix, review gauntlet, acceptance matrix",
   "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
   "approxCreditNote": "7 sonnet worker runs + 1 haiku so far; Fable lead in delegation mode; codex review queued",
-  "updatedAt": "2026-07-31T09:00",
+  "updatedAt": "2026-08-11",
   "leadModel": "Opus (switched from Fable 5 for cost)",
-  "openBlockers": {
-    "SR-001": "client secret -> Key Vault reference (BLOCKS PROD)",
-    "SR-002": "disableLocalAuth \u2014 widened to AI Search/Cosmos/Storage + remove key fallbacks in cosmos.ts/azure-storage.ts (BLOCKS PROD)",
-    "SR-005": "dependency CVEs: 2 CRITICAL (form-data, next-auth) + 15 HIGH incl. jws, next, ws (BLOCKS PROD)",
-    "H-2": "no ipSecurityRestrictions; val1 unproxied managed cert contradicts SAD 7.2 \u2014 needs fix or a decision-log entry",
-    "H-3": "SAD 16.2 Azure Policy does not exist \u2014 implement or correct the SAD claim",
-    "H-4": "GDPR erasure + TTL \u2014 worker in flight",
-    "H-5": "none of SAD 31.2's 7 alert rules implemented"
-  },
-  "testCount": 183
+  "openBlockers": [
+    "SR-001",
+    "SR-006",
+    "SR-007",
+    "SR-008",
+    "SR-010",
+    "H-2",
+    "H-3",
+    "H-5",
+    "task#30 provisioning gate",
+    "authenticated data-plane matrix",
+    "review gauntlet",
+    "acceptance matrix"
+  ],
+  "testCount": 183,
+  "deployedRevision": "a9eead3 (2026-08-10T22:11Z)",
+  "committedNotDeployed": "f6bce2d \u2014 docs only, no redeploy needed",
+  "verifiedWorking": [
+    "Entra auth end-to-end",
+    "canonical identity d4b1b55b-...:7d37f13b-...",
+    "isAdmin via oid",
+    "/ -> /chat redirect",
+    "Cosmos schema + gate",
+    "240 unit tests",
+    "3-state sign-in Playwright suite"
+  ],
+  "handoffDoc": "docs/session-handoff-current.md"
 }

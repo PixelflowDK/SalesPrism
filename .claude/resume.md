@@ -40,3 +40,9 @@
 ## Where to look
 - `.claude/session-state.json` · `docs/project-audit.md` · `docs/deployment-record.md` · `docs/known-limitations.md` · `docs/architecture-decisions/ADR-001`, `ADR-002` · `docs/reviews/` · `DESIGN.md`
 - Resume command: `claude --continue` in `/Users/hugosson/workspace/SalesPrism`
+
+## 2026-08-11 — autonomous completion mode
+Auth is FIXED and verified live (three stacked defects: SW csrf cache, oid/tid source, un-awaited redirect).
+Canonical identity confirmed live: d4b1b55b-6c92-4419-9a08-956e975dce86:7d37f13b-d198-4421-81c6-f0f9076049c7, isAdmin true.
+Read docs/session-handoff-current.md for the authoritative remaining-work graph and the fresh-session launch prompt.
+Key correction standing: F-01/F-02 have no navigation entry point — backend completeness was mistaken for product completeness.
