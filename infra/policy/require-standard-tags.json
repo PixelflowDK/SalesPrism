@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "17720146340895324712"
+      "templateHash": "16714782434261212582"
     }
   },
   "resources": [
@@ -25,22 +25,42 @@
         },
         "policyRule": {
           "if": {
-            "anyOf": [
+            "allOf": [
               {
-                "field": "tags['customer']",
-                "exists": "false"
+                "value": "[[resourceGroup().name]",
+                "like": "rg-azurechat-*"
               },
               {
-                "field": "tags['environment']",
-                "exists": "false"
+                "not": {
+                  "field": "type",
+                  "in": [
+                    "Microsoft.Web/certificates",
+                    "microsoft.insights/actionGroups",
+                    "microsoft.alertsmanagement/smartDetectorAlertRules",
+                    "Microsoft.Network/networkInterfaces",
+                    "Microsoft.Network/networkWatchers"
+                  ]
+                }
               },
               {
-                "field": "tags['managed-by']",
-                "exists": "false"
-              },
-              {
-                "field": "tags['model-tier']",
-                "exists": "false"
+                "anyOf": [
+                  {
+                    "field": "tags['customer']",
+                    "exists": "false"
+                  },
+                  {
+                    "field": "tags['environment']",
+                    "exists": "false"
+                  },
+                  {
+                    "field": "tags['managed-by']",
+                    "exists": "false"
+                  },
+                  {
+                    "field": "tags['model-tier']",
+                    "exists": "false"
+                  }
+                ]
               }
             ]
           },

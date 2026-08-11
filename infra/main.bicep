@@ -45,6 +45,17 @@ param aiSearchSku string = 'basic'
 @description('H-2 — restrict App Service ingress to Cloudflare IP ranges only. Default true for all customers; must be false ONLY for the documented val1 exception (unproxied, App Service-managed cert) — see modules/app-service.bicep header and docs/known-limitations.md. Never set false for a production customer.')
 param restrictIngressToCloudflare bool = true
 
+// SR-014 — passed through to modules/app-service.bicep. See that file's param
+// block for why each of these must be templated rather than applied by hand.
+@description('Entra application (client) id for this customer. An identifier, never a secret.')
+param azureAdClientId string = ''
+
+@description('Entra directory (tenant) id. Single-tenant by design (ADR-003).')
+param azureAdTenantId string = ''
+
+@description('Comma-separated Entra object ids granted admin rights (ADR-003 isAdminOid). Object ids, never emails. Empty means no admins — fails closed.')
+param adminObjectIds string = ''
+
 @description('H-5 (SAD §31.2) — alert action group email receiver.')
 param alertEmailAddress string = 'kontakt@pixelflow.dk'
 
@@ -359,6 +370,9 @@ module appServiceModule 'modules/app-service.bicep' = {
     speechRegion:                  speechModule.outputs.speechRegion
     speechResourceId:              speechModule.outputs.speechId
     speechEndpoint:                speechModule.outputs.speechEndpoint
+    azureAdClientId:               azureAdClientId
+    azureAdTenantId:               azureAdTenantId
+    adminObjectIds:                adminObjectIds
   }
 }
 

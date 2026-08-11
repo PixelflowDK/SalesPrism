@@ -22,24 +22,81 @@ resource requireStandardTags 'Microsoft.Authorization/policyDefinitions@2021-06-
       version: '1.0.0'
       source: 'infra/policy/require-standard-tags.bicep — H-3, 2026-08-11'
     }
+    // H-3 (revised 2026-08-12 after the DoNotEnforce dry run this file's
+    // trailing comment asked for). The dry run found 16 non-compliant
+    // resources and NONE of them were a real tagging mistake:
+    //
+    //   11  rg-insightcast-prod-swc  — an unrelated production workload in the
+    //                                 same subscription (VM, VNet, backup
+    //                                 vault, NIC, NSG, disks). Nothing to do
+    //                                 with Sales Prism.
+    //    2  networkwatcherrg         — created and owned by the Azure platform.
+    //    3  rg-azurechat-val1        — all implicitly created: the App
+    //                                 Service-managed certificate and the
+    //                                 Application Insights smart-detection
+    //                                 action group / alert rule.
+    //
+    // Enforcing the previous rule would therefore have denied future writes to
+    // the operator's OTHER production environment and to resources Azure
+    // creates on its own — a subscription-wide outage risk, not a guardrail.
+    //
+    // Two conditions fix that at the source, which is better than an
+    // ever-growing `notScopes` list on the assignment:
+    //
+    //   1. Only evaluate resource groups named `rg-azurechat-*`. This is the
+    //      platform's own naming convention (CLAUDE.md), so it self-maintains
+    //      as customers are added and automatically ignores everything else in
+    //      the subscription.
+    //   2. Exempt resource types that Azure creates implicitly, which no
+    //      template can tag because no template declares them.
+    //
+    // The other two definitions in this initiative (region, GlobalStandard)
+    // had ZERO violations in the same dry run and need no equivalent scoping.
     policyRule: {
       if: {
-        anyOf: [
+        allOf: [
           {
-            field: 'tags[\'customer\']'
-            exists: 'false'
+            value: '[resourceGroup().name]'
+            like: 'rg-azurechat-*'
           }
           {
-            field: 'tags[\'environment\']'
-            exists: 'false'
+            not: {
+              field: 'type'
+              in: [
+                // App Service creates the managed TLS certificate itself when a
+                // hostname binding is made; it is never declared in Bicep.
+                'Microsoft.Web/certificates'
+                // Application Insights auto-provisions smart detection on every
+                // component, with no way to tag or suppress the pair.
+                'microsoft.insights/actionGroups'
+                'microsoft.alertsmanagement/smartDetectorAlertRules'
+                // Private Endpoints materialise their own NIC as a separate
+                // resource; the NIC inherits nothing from the parent.
+                'Microsoft.Network/networkInterfaces'
+                // Platform-owned, lives in the platform's own resource group.
+                'Microsoft.Network/networkWatchers'
+              ]
+            }
           }
           {
-            field: 'tags[\'managed-by\']'
-            exists: 'false'
-          }
-          {
-            field: 'tags[\'model-tier\']'
-            exists: 'false'
+            anyOf: [
+              {
+                field: 'tags[\'customer\']'
+                exists: 'false'
+              }
+              {
+                field: 'tags[\'environment\']'
+                exists: 'false'
+              }
+              {
+                field: 'tags[\'managed-by\']'
+                exists: 'false'
+              }
+              {
+                field: 'tags[\'model-tier\']'
+                exists: 'false'
+              }
+            ]
           }
         ]
       }

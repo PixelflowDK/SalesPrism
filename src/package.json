@@ -13,7 +13,9 @@
     "debug": "set NODE_OPTIONS=--inspect && next dev",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "e2e:auth": "tsx e2e/auth-setup.ts",
+    "e2e:authenticated": "playwright test e2e/authenticated-journeys.spec.ts"
   },
   "dependencies": {
     "@ai-sdk/azure": "^3.0.70",

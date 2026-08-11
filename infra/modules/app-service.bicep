@@ -94,6 +94,40 @@ param speechEndpoint string
 @description('H-2 — restrict App Service ingress to Cloudflare IP ranges only (default-deny otherwise). Must be false only for an explicitly documented exception (see val1 in known-limitations.md); true for every production customer.')
 param restrictIngressToCloudflare bool = true
 
+// ---------------------------------------------------------------------------
+// SR-014 — identity settings that were being set by hand and therefore kept
+// getting wiped.
+//
+// App Service app settings are replaced wholesale on every template deploy: a
+// setting that exists only because someone ran `az webapp config appsettings
+// set` disappears the next time this module is applied. All three below were
+// discovered missing from a LIVE app, each causing a different silent failure:
+//
+//   AZURE_AD_CLIENT_ID / AZURE_AD_TENANT_ID — absent entirely, so the Entra
+//   provider guard in auth-page/auth-api.ts short-circuited and
+//   /api/auth/providers returned {}. Sign-in was impossible and nothing in the
+//   UI said why.
+//
+//   ADMIN_OBJECT_IDS — absent, so isAdminOid() returned false for everyone and
+//   the admin portal was unreachable by ANY account, including the tenant's
+//   only Global Administrator. This one is easy to miss because it fails
+//   CLOSED and looks like correct authorization: /admin serves the
+//   "not authorized" page rather than erroring. Found only by signing in as a
+//   real admin and observing `isAdmin` absent from the session.
+//
+// These are identifiers, not secrets — object ids and a tenant id, all of them
+// readable by any member of the directory. They belong in the template.
+// ---------------------------------------------------------------------------
+
+@description('Entra application (client) id for this customer\'s app registration — auth-api.ts AZURE_AD_CLIENT_ID. An identifier, never a secret.')
+param azureAdClientId string
+
+@description('Entra directory (tenant) id — auth-api.ts AZURE_AD_TENANT_ID. Single-tenant by design (ADR-003); never set this to `common` or `organizations`.')
+param azureAdTenantId string
+
+@description('Comma-separated Entra object ids (oid claim) granted admin rights — ADR-003 isAdminOid(). Object ids, NOT emails: the val1 investigation found the sole admin is an MSA-federated #EXT# account whose mail/preferred_username claims are not stable across logins, so an email allow-list was never safe. Empty means no admins, which fails closed.')
+param adminObjectIds string = ''
+
 // Cloudflare published IP ranges — pinned 2026-08-11 from
 // https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6.
 // Cloudflare rotates these infrequently but not never; re-fetch both URLs and
@@ -231,6 +265,11 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
         // not a template bug.
         { name: 'AZURE_AD_CLIENT_SECRET',           value: azureAdClientSecretKeyVaultRef }
         { name: 'NEXTAUTH_SECRET',                  value: nextAuthSecretKeyVaultRef }
+        // SR-014 — see the param block above for why these three must live in
+        // the template rather than being applied by hand.
+        { name: 'AZURE_AD_CLIENT_ID',               value: azureAdClientId }
+        { name: 'AZURE_AD_TENANT_ID',               value: azureAdTenantId }
+        { name: 'ADMIN_OBJECT_IDS',                 value: adminObjectIds }
         { name: 'AZURE_STORAGE_ACCOUNT_NAME',       value: storageAccountName }
         { name: 'AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT', value: documentIntelligenceEndpoint }
         { name: 'AZURE_SPEECH_REGION',              value: speechRegion }

@@ -1,0 +1,4 @@
+
+# E2E auth capture — storage-state.json holds a LIVE session cookie; the
+# profile dir holds Entra session cookies. Never commit either.
+.auth/

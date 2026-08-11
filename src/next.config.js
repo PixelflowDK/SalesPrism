@@ -3,6 +3,33 @@ const withPWA = require("@ducanh2912/next-pwa").default;
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  // SR-014: the App Service filesystem is READ-ONLY at runtime.
+  //
+  // `WEBSITE_RUN_FROM_PACKAGE=1` (verified set on app-azurechat-val1, and the
+  // normal configuration for zip deploy) mounts /home/site/wwwroot from the
+  // package as read-only. Next's image optimizer writes optimized variants to
+  // `.next/cache/images`, so every request through `next/image` produced:
+  //
+  //   ENOENT: no such file or directory, mkdir '/home/site/wwwroot/.next/cache'
+  //
+  // and — the part that actually matters — it surfaced as an
+  // `unhandledRejection`, not a caught error. An unhandled rejection can
+  // terminate the Node process, so this was a latent availability bug on every
+  // page that renders an image, not merely log noise. Found in Application
+  // Insights during the first real authenticated session on val1; it is
+  // invisible to unauthenticated smoke tests because the pages that use
+  // `next/image` are all behind the login.
+  //
+  // `unoptimized` removes the write path entirely rather than trying to make
+  // the filesystem writable (which would mean giving up run-from-package, and
+  // with it atomic deploys). Nothing is lost here: the two `next/image` call
+  // sites are a chat image preview and the home hero, and user avatars are
+  // `data:` URLs that the optimizer cannot process anyway. It also removes the
+  // optimizer's server-side fetch of remote image URLs, which is one less
+  // request-forgery surface.
+  images: {
+    unoptimized: true,
+  },
   // Build provenance for /api/health (see src/app/api/health/route.ts).
   //
   // `env` INLINES these at build time, which is the entire point: they must
