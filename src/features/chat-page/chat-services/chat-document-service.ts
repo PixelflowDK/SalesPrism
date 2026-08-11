@@ -11,7 +11,10 @@ import { DocumentIntelligenceInstance } from "@/features/common/services/documen
 import { uniqueId } from "@/features/common/util";
 import { getCurrentTenantSlug } from "@/features/theme/tenant-resolver";
 import { SqlQuerySpec } from "@azure/cosmos";
-import { EnsureIndexIsCreated } from "./azure-ai-search/azure-ai-search";
+import {
+  DeleteDocumentsByFileNameInThread,
+  EnsureIndexIsCreated,
+} from "./azure-ai-search/azure-ai-search";
 import { CHAT_DOCUMENT_ATTRIBUTE, ChatDocumentModel } from "./models";
 
 const MAX_UPLOAD_DOCUMENT_SIZE: number = 20000000;
@@ -177,6 +180,88 @@ export const FindAllChatDocuments = async (
         },
       ],
     };
+  }
+};
+
+/**
+ * W6 (`/documents`) — every non-deleted document the CURRENT user has ever
+ * uploaded, across all of their chat threads (not scoped to a single
+ * `chatThreadId` like `FindAllChatDocuments`). Ownership filter is identical
+ * to every other per-user accessor in this codebase: `r.userId=@userId`,
+ * where `userId` on `ChatDocumentModel` is set from `currentUserId()` at
+ * upload time (see `CreateChatDocument` above) — never a client-supplied
+ * value, so this cannot be widened into a cross-user listing.
+ */
+export const FindAllChatDocumentsForCurrentUser = async (): Promise<
+  ServerActionResponse<ChatDocumentModel[]>
+> => {
+  try {
+    const userId = await currentUserId();
+    const querySpec: SqlQuerySpec = {
+      query:
+        "SELECT * FROM root r WHERE r.type=@type AND r.userId=@userId AND r.isDeleted=@isDeleted ORDER BY r.createdAt DESC",
+      parameters: [
+        { name: "@type", value: CHAT_DOCUMENT_ATTRIBUTE },
+        { name: "@userId", value: userId },
+        { name: "@isDeleted", value: false },
+      ],
+    };
+
+    const { resources } = await HistoryContainer()
+      .items.query<ChatDocumentModel>(querySpec)
+      .fetchAll();
+
+    return { status: "OK", response: resources };
+  } catch (e) {
+    console.error("FindAllChatDocumentsForCurrentUser error:", e);
+    return { status: "ERROR", errors: [{ message: `${e}` }] };
+  }
+};
+
+/**
+ * W6 (`/documents`) — removes a single uploaded document: soft-deletes its
+ * `ChatDocumentModel` record (same `isDeleted` convention as
+ * `SoftDeleteChatThreadForCurrentUser`) AND purges its chunks from the AI
+ * Search index (`DeleteDocumentsByFileNameInThread`), so it stops being
+ * retrievable by the RAG tool immediately — not just hidden from this list.
+ * Re-verifies `r.userId === callerId` server-side before doing either;
+ * never trusts a client-supplied document id's ownership.
+ */
+export const RemoveChatDocument = async (
+  documentId: string
+): Promise<ServerActionResponse<boolean>> => {
+  try {
+    const userId = await currentUserId();
+    const querySpec: SqlQuerySpec = {
+      query:
+        "SELECT * FROM root r WHERE r.type=@type AND r.id=@id AND r.userId=@userId AND r.isDeleted=@isDeleted",
+      parameters: [
+        { name: "@type", value: CHAT_DOCUMENT_ATTRIBUTE },
+        { name: "@id", value: documentId },
+        { name: "@userId", value: userId },
+        { name: "@isDeleted", value: false },
+      ],
+    };
+
+    const { resources } = await HistoryContainer()
+      .items.query<ChatDocumentModel>(querySpec)
+      .fetchAll();
+
+    const document = resources[0];
+    if (!document) {
+      return { status: "NOT_FOUND", errors: [{ message: "Document not found." }] };
+    }
+
+    await HistoryContainer().items.upsert<ChatDocumentModel>({ ...document, isDeleted: true });
+
+    await DeleteDocumentsByFileNameInThread(document.chatThreadId, document.name);
+
+    RevalidateCache({ page: "chat", params: document.chatThreadId });
+
+    return { status: "OK", response: true };
+  } catch (e) {
+    console.error("RemoveChatDocument error:", e);
+    return { status: "ERROR", errors: [{ message: `${e}` }] };
   }
 };
 

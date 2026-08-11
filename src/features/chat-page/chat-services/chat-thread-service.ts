@@ -64,6 +64,37 @@ export const FindAllChatThreadForCurrentUser = async (): Promise<
   }
 };
 
+/**
+ * W3 (`/coach`) — "history of coaching sessions the seller can return to".
+ * Same shape/authorization as `FindAllChatThreadForCurrentUser`, additionally
+ * filtered to threads whose sticky `coachingContext` (see models.ts
+ * doc-comment) matches — i.e. threads the guided conversation-coaching flow
+ * has actually been active on, not every chat thread.
+ */
+export const FindChatThreadsByCoachingContext = async (
+  coachingContext: "meeting-prep" | "conversation-coaching"
+): Promise<ServerActionResponse<Array<ChatThreadModel>>> => {
+  try {
+    const querySpec: SqlQuerySpec = {
+      query:
+        "SELECT * FROM root r WHERE r.type=@type AND r.userId=@userId AND r.isDeleted=@isDeleted AND r.coachingContext=@coachingContext ORDER BY r.lastMessageAt DESC",
+      parameters: [
+        { name: "@type", value: CHAT_THREAD_ATTRIBUTE },
+        { name: "@userId", value: await currentUserId() },
+        { name: "@isDeleted", value: false },
+        { name: "@coachingContext", value: coachingContext },
+      ],
+    };
+
+    const { resources } = await HistoryContainer()
+      .items.query<ChatThreadModel>(querySpec, { partitionKey: await currentUserId() })
+      .fetchAll();
+    return { status: "OK", response: resources };
+  } catch (error) {
+    return { status: "ERROR", errors: [{ message: `${error}` }] };
+  }
+};
+
 export const FindChatThreadForCurrentUser = async (
   id: string
 ): Promise<ServerActionResponse<ChatThreadModel>> => {

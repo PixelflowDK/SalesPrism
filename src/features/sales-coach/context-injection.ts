@@ -124,6 +124,66 @@ export const EnsureModuleConfig = async (
   }
 };
 
+/**
+ * W4 (SAD §27.3) pure merge step, exported/tested separately from the
+ * Cosmos I/O around it (same "pull the pure logic out of the async
+ * writer" shape as `mergeContacts` in customer-entity-service.ts). Only
+ * `active`/`order`/`customName` are ever overwritten from a patch entry;
+ * `language`/`contentOverride` are always preserved from `existingModules`,
+ * and any `existingModules` entry with no matching patch is returned
+ * unchanged (a partial patch list never drops modules).
+ */
+export const mergeModuleConfigEntries = (
+  existingModules: ModuleConfigEntry[],
+  patchEntries: Array<Pick<ModuleConfigEntry, "key" | "active" | "order" | "customName">>
+): ModuleConfigEntry[] => {
+  const byKey = new Map(patchEntries.map((e) => [e.key, e]));
+
+  return existingModules.map((m) => {
+    const patch = byKey.get(m.key);
+    return patch ? { ...m, active: patch.active, order: patch.order, customName: patch.customName } : m;
+  });
+};
+
+/**
+ * W4 (SAD §27.3) — admin per-tenant module active/order toggle. Only
+ * `active`/`order`/`customName` are ever writable from the admin UI;
+ * `language`/`contentOverride` are left untouched (set elsewhere / not yet
+ * exposed to admins) and `key` is never reassigned since it's the registry
+ * identity. Re-validates the full config against `ModuleConfigSchema`
+ * before writing, same defense-in-depth pattern as every other Cosmos
+ * writer in this file/directory.
+ */
+export const UpdateModuleConfig = async (
+  tenantSlug: string,
+  entries: Array<Pick<ModuleConfigEntry, "key" | "active" | "order" | "customName">>
+): Promise<ServerActionResponse<ModuleConfig>> => {
+  const existing = await EnsureModuleConfig(tenantSlug);
+  if (existing.status !== "OK") return existing;
+
+  try {
+    const updated: ModuleConfig = {
+      ...existing.response,
+      modules: mergeModuleConfigEntries(existing.response.modules, entries),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const parsed = ModuleConfigSchema.safeParse(updated);
+    if (!parsed.success) {
+      return { status: "ERROR", errors: zodErrorsToServerActionErrors(parsed.error.errors) };
+    }
+
+    const { resource } = await ConfigContainer().items.upsert<ModuleConfig>(parsed.data);
+    if (!resource) {
+      return { status: "ERROR", errors: [{ message: "Unable to update module configuration." }] };
+    }
+    return { status: "OK", response: resource };
+  } catch (error) {
+    safeLog.error("sales-coach.module-config.update-failed", { tenantSlug });
+    return { status: "ERROR", errors: [{ message: "Unable to update module configuration." }] };
+  }
+};
+
 export type ActiveModuleView = SalesCoachModuleDefinition & Pick<ModuleConfigEntry, "order" | "customName">;
 
 /** Active modules for a tenant, merged with their registry name/essence, ordered per `ModuleConfigEntry.order`. */

@@ -8,11 +8,11 @@ export const PersonaHero = () => {
     <Hero
       title={
         <>
-          <VenetianMask size={36} strokeWidth={1.5} /> Persona
+          <VenetianMask size={36} strokeWidth={1.5} /> AI Personas
         </>
       }
-      description={`  Persona is a representation of a personality that you can use to
-    have a conversation with.`}
+      description={`An AI Persona is a system-prompt personality you can chat with — a different concept from
+    a customer's Stakeholders, which live under each customer's profile (see Customers).`}
     >
       <HeroButton
         title="New Persona"

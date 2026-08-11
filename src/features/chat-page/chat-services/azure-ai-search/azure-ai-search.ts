@@ -259,6 +259,51 @@ export const DeleteDocuments = async (
 const escapeODataLiteral = (value: string): string => value.replace(/'/g, "''");
 
 /**
+ * W6 (`/documents`) — single-document removal, one level more granular than
+ * `DeleteDocuments` (which purges an entire thread). A single uploaded file
+ * is indexed as multiple chunks that all share `chatThreadId` + `metadata`
+ * (the original file name — see `IndexDocuments`), so that pair is the
+ * document's identity within the index. Callers MUST have already verified
+ * the caller owns `chatThreadId` (see `chat-document-service.ts`'s
+ * `RemoveChatDocument`) — this function does not re-check ownership itself,
+ * same division of responsibility as `DeleteDocuments`.
+ */
+export const DeleteDocumentsByFileNameInThread = async (
+  chatThreadId: string,
+  fileName: string
+): Promise<Array<ServerActionResponse<boolean>>> => {
+  try {
+    const filter = `chatThreadId eq '${escapeODataLiteral(chatThreadId)}' and metadata eq '${escapeODataLiteral(
+      fileName
+    )}'`;
+    if (debug) console.log("Deleting documents by fileName in thread:", filter);
+    const matchingDocumentsResponse = await SimpleSearch(undefined, filter);
+
+    if (matchingDocumentsResponse.status === "OK") {
+      const instance = AzureAISearchInstance();
+      const deletedResponse = await instance.deleteDocuments(
+        matchingDocumentsResponse.response.map((r) => r.document)
+      );
+
+      const response: Array<ServerActionResponse<boolean>> = [];
+      deletedResponse.results.forEach((r) => {
+        if (r.succeeded) {
+          response.push({ status: "OK", response: r.succeeded });
+        } else {
+          response.push({ status: "ERROR", errors: [{ message: `${r.errorMessage}` }] });
+        }
+      });
+      return response;
+    }
+
+    return [matchingDocumentsResponse];
+  } catch (e) {
+    console.error("DeleteDocumentsByFileNameInThread error:", e);
+    return [{ status: "ERROR", errors: [{ message: `${e}` }] }];
+  }
+};
+
+/**
  * GDPR erasure (Art. 17) support — deletes every AI Search index document
  * whose `user` field (the same SHA-256 hashed id `rag-tool.ts`'s
  * `buildDocumentSearchFilter` scopes retrieval by) matches `userId`, across

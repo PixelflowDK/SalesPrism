@@ -59,7 +59,7 @@ vi.mock("./chat-message-service", () => ({
   FindAllChatMessagesForCurrentUser: vi.fn(),
 }));
 
-import { EnsureChatThreadOperation } from "./chat-thread-service";
+import { EnsureChatThreadOperation, FindChatThreadsByCoachingContext } from "./chat-thread-service";
 import { CHAT_THREAD_ATTRIBUTE, ChatThreadModel } from "./models";
 
 const OWNER_HASHED_ID = "hashed-owner-abc";
@@ -142,5 +142,44 @@ describe("EnsureChatThreadOperation — Stage 4 security fix (non-owner/non-admi
     // getCurrentUser/currentUserId should not even be consulted once the
     // underlying find already failed.
     expect(getCurrentUserMock).not.toHaveBeenCalled();
+  });
+});
+
+// W3 (`/coach`) — "history of coaching sessions the seller can return to".
+describe("FindChatThreadsByCoachingContext", () => {
+  beforeEach(() => {
+    queryMock.mockReset();
+    currentUserIdMock.mockReset();
+  });
+
+  it("filters by type, userId, isDeleted=false AND the requested coachingContext, partition-scoped to the caller", async () => {
+    currentUserIdMock.mockResolvedValue(OWNER_HASHED_ID);
+    mockQueryReturns(makeThread({ coachingContext: "conversation-coaching" }));
+
+    const result = await FindChatThreadsByCoachingContext("conversation-coaching");
+
+    expect(result.status).toBe("OK");
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parameters: expect.arrayContaining([
+          { name: "@type", value: CHAT_THREAD_ATTRIBUTE },
+          { name: "@userId", value: OWNER_HASHED_ID },
+          { name: "@isDeleted", value: false },
+          { name: "@coachingContext", value: "conversation-coaching" },
+        ]),
+      }),
+      { partitionKey: OWNER_HASHED_ID }
+    );
+  });
+
+  it("returns an ERROR result (never throws) when the underlying query rejects", async () => {
+    currentUserIdMock.mockResolvedValue(OWNER_HASHED_ID);
+    queryMock.mockImplementation(() => {
+      throw new Error("cosmos unavailable");
+    });
+
+    const result = await FindChatThreadsByCoachingContext("meeting-prep");
+
+    expect(result.status).toBe("ERROR");
   });
 });

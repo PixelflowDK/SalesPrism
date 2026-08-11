@@ -18,6 +18,16 @@ const requireAuth: string[] = [
   "/admin",
   "/customers",
   "/briefs",
+  // W1/W2/W3/W4/W6 (feature-to-ui-audit.md) — new Coach 360 product-layer
+  // routes. Every entry here MUST also appear in `config.matcher` below, per
+  // the doc-comment above: an entry present here but absent there is
+  // silently unenforced (see the /customers etc. 500-instead-of-redirect
+  // history this file's comment documents).
+  "/home",
+  "/prepare",
+  "/coach",
+  "/modules",
+  "/documents",
 ];
 // "/admin" already covers the `/admin/*` UI. "/api/admin" is listed
 // separately because it does NOT start with "/admin" as a string prefix
@@ -138,6 +148,16 @@ export const config = {
     "/briefs",
     "/persona/:path*",
     "/prompt/:path*",
+    "/home/:path*",
+    "/home",
+    "/prepare/:path*",
+    "/prepare",
+    "/coach/:path*",
+    "/coach",
+    "/modules/:path*",
+    "/modules",
+    "/documents/:path*",
+    "/documents",
     // Auth routes are otherwise deliberately excluded (anon access is required to log
     // on). This ONE path is included solely for the stale-CSRF self-heal above — it
     // adds no auth check and cannot gate sign-in.

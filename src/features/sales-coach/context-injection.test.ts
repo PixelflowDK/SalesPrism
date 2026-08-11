@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   ActiveModuleView,
   buildSalesCoachSystemPrompt,
+  mergeModuleConfigEntries,
   SalesCoachPersonaContext,
 } from "./context-injection";
+import { ModuleConfigEntry } from "./models";
 
 const module1: ActiveModuleView = {
   key: "module-01",
@@ -126,5 +128,50 @@ describe("buildSalesCoachSystemPrompt", () => {
   it("omits the customer context section when customerContext is null/undefined", () => {
     const prompt = buildSalesCoachSystemPrompt([module1], basePersona);
     expect(prompt).not.toMatch(/Kendt kunde-kontekst/);
+  });
+});
+
+// W4 (`/admin/modules`) — the admin toggle's pure merge step.
+describe("mergeModuleConfigEntries", () => {
+  const existing: ModuleConfigEntry[] = [
+    { key: "module-01", active: true, order: 1, customName: null, language: "da", contentOverride: null },
+    { key: "module-02", active: true, order: 2, customName: "Custom name", language: "en", contentOverride: "abc" },
+    { key: "module-03", active: false, order: 3, customName: null, language: "da", contentOverride: null },
+  ];
+
+  it("overwrites only active/order/customName from a matching patch entry", () => {
+    const result = mergeModuleConfigEntries(existing, [
+      { key: "module-01", active: false, order: 5, customName: "Renamed" },
+    ]);
+
+    const patched = result.find((m) => m.key === "module-01")!;
+    expect(patched.active).toBe(false);
+    expect(patched.order).toBe(5);
+    expect(patched.customName).toBe("Renamed");
+  });
+
+  it("preserves language/contentOverride verbatim — the patch shape has no such fields", () => {
+    const result = mergeModuleConfigEntries(existing, [
+      { key: "module-02", active: false, order: 2, customName: "Custom name" },
+    ]);
+
+    const patched = result.find((m) => m.key === "module-02")!;
+    expect(patched.language).toBe("en");
+    expect(patched.contentOverride).toBe("abc");
+  });
+
+  it("leaves every existing entry with no matching patch entirely unchanged (a partial patch list never drops modules)", () => {
+    const result = mergeModuleConfigEntries(existing, [
+      { key: "module-01", active: false, order: 1, customName: null },
+    ]);
+
+    const untouched = result.find((m) => m.key === "module-03")!;
+    expect(untouched).toEqual(existing[2]);
+    expect(result).toHaveLength(existing.length);
+  });
+
+  it("returns existing entries unchanged, in original order, when patchEntries is empty", () => {
+    const result = mergeModuleConfigEntries(existing, []);
+    expect(result).toEqual(existing);
   });
 });
