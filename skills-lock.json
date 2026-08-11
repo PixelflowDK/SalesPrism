@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "skills": {
+    "airunway-aks-setup": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/airunway-aks-setup/SKILL.md",
+      "computedHash": "9016a43551692be0396db38fccdf0f0fa549f5194d1c288287f2f720c9e38359"
+    },
+    "appinsights-instrumentation": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/appinsights-instrumentation/SKILL.md",
+      "computedHash": "a70f5b6abca44d75b1879bc68aa2926b0355c55cae654d79db97fdbb20c36337"
+    },
+    "azure-ai": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-ai/SKILL.md",
+      "computedHash": "4d6e69d68a30bf05988677616fb213f7c01d2d97e7d2bcec9ffabb1c3c6ada81"
+    },
+    "azure-aigateway": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-aigateway/SKILL.md",
+      "computedHash": "ce4fbc6e2e04fa6fa0b83ee206d87fdf7320c06cc126374c029d7d7c56fa10c8"
+    },
+    "azure-cloud-migrate": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-cloud-migrate/SKILL.md",
+      "computedHash": "353daa0fc4b05b03ed08df298be3a6948279da7d9ff0b37ac368e9c1e37e7ceb"
+    },
+    "azure-compliance": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-compliance/SKILL.md",
+      "computedHash": "9925a074f6cabb23b4316eed17e6b538d1e5c0b47e4f8905dc4a64c691e514f5"
+    },
+    "azure-compute": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-compute/SKILL.md",
+      "computedHash": "b5d3813cb5066d1d11c725c3f336848e7a3c2d7a472e6a9ab3cf288bafb3c6cd"
+    },
+    "azure-cost": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-cost/SKILL.md",
+      "computedHash": "b0aa9ed07b4adf1b68dcfe37cb6043410291d96e18a4315369f28b1c8722530c"
+    },
+    "azure-deploy": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-deploy/SKILL.md",
+      "computedHash": "12e032e33a0c716377cbdd3c13abea89ef2883f7e5471585b648eb64bb630a18"
+    },
+    "azure-diagnostics": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-diagnostics/SKILL.md",
+      "computedHash": "76ea4baf950b3207883bd60c8fa9b6df8962eb1d52949d88996b2b145a95d239"
+    },
+    "azure-enterprise-infra-planner": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-enterprise-infra-planner/SKILL.md",
+      "computedHash": "b18e104bcbac43ce400ccac4ba3088b5cc03eaa46585088ad50475364c117b90"
+    },
+    "azure-hosted-copilot-sdk": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-hosted-copilot-sdk/SKILL.md",
+      "computedHash": "380fd85ab934ee3e23353fcce320aaf67a4bbef4a4c55e9c93955aef2488cd9c"
+    },
+    "azure-kubernetes": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-kubernetes/SKILL.md",
+      "computedHash": "9f68c118ffc7f202edb728fdc30398e13e9f9e68389b9439f093386ddb7d265e"
+    },
+    "azure-kusto": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-kusto/SKILL.md",
+      "computedHash": "88a3b6ded86237a0f082917685989fb0a1484e967a7869bbdd944ae994c27556"
+    },
+    "azure-messaging": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-messaging/SKILL.md",
+      "computedHash": "8fa417cf6a4a358b9cef0a533e651323842701c5152112990c28778f12e9f100"
+    },
+    "azure-prepare": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-prepare/SKILL.md",
+      "computedHash": "b215a2cd75ef021af64daf17cbb9375488c8a81dab77243055a72c21348d3c1b"
+    },
+    "azure-quotas": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-quotas/SKILL.md",
+      "computedHash": "e63a6a74239d716a33e90633e97f969fb183268207029ed3d35ffb99cb829c83"
+    },
+    "azure-rbac": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-rbac/SKILL.md",
+      "computedHash": "26b19206a52249eb74a15d9eb473319ad387be5254396d9f15aa1da6bdaaea4b"
+    },
+    "azure-reliability": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-reliability/SKILL.md",
+      "computedHash": "720eb76019e2c9167d4670e6916fb3ce48674e83e30de9bdd29d4e53362586d8"
+    },
+    "azure-resource-lookup": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-resource-lookup/SKILL.md",
+      "computedHash": "cace60773f5c5a6aedd039613177be3d136dec5b5b5f2cc6f1708ac5f3c79938"
+    },
+    "azure-resource-visualizer": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-resource-visualizer/SKILL.md",
+      "computedHash": "9d4db5ae1aa433706b1d3fcdbf1617cdda80756992406a7889d6546704bc93ab"
+    },
+    "azure-storage": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-storage/SKILL.md",
+      "computedHash": "7373be6f1fa6c5ccde0d512acbe238be42de2deffb5e26e3123978b91eea1106"
+    },
+    "azure-upgrade": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-upgrade/SKILL.md",
+      "computedHash": "578182734705ebe414427ba46c84a96131a8ec88a3f48c2611ea29156e04194d"
+    },
+    "azure-validate": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/azure-validate/SKILL.md",
+      "computedHash": "67e401745a9cb9b1aae5c813b092ad9dbe4e632f252a4a15750401b5156f5ab5"
+    },
+    "codex-review": {
+      "source": "chaseai-yt/grill-me-codex",
+      "sourceType": "github",
+      "skillPath": "skills/codex-review/SKILL.md",
+      "computedHash": "ecc585d22aab9aed61eb26846ef4bd30484826e943d05346344fced31215fdad"
+    },
+    "entra-agent-id": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/entra-agent-id/SKILL.md",
+      "computedHash": "db321d866f2d9418b17f7274e766368e9a0e592717dff74e9cccec428ee7a5cf"
+    },
+    "entra-app-registration": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/entra-app-registration/SKILL.md",
+      "computedHash": "793e83d36c7575710c5e29c84dc87367d989f0a0d0ffad2b1887e306066d97cc"
+    },
+    "gdpr-data-handling": {
+      "source": "sickn33/antigravity-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gdpr-data-handling/SKILL.md",
+      "computedHash": "1bb0f7c432411709596053985a29bc76593384ecf98012e7144e3831d5940bee"
+    },
+    "git-workflow": {
+      "source": "netresearch/git-workflow-skill",
+      "sourceType": "github",
+      "skillPath": "skills/git-workflow/SKILL.md",
+      "computedHash": "a53346688c001c53591a5ac5baa8abbb2470e98d208467c166ef3200ba4d9723"
+    },
+    "graphify": {
+      "source": "akillness/oh-my-skills",
+      "sourceType": "github",
+      "skillPath": ".agent-skills/graphify/SKILL.md",
+      "computedHash": "25b67f0220e237c1a1e35aacfa02e2240c6265cb27b28a3d954bb27617caff07"
+    },
+    "grill-me": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/grill-me/SKILL.md",
+      "computedHash": "784f0dbb7403b0f00324bce9a112f715342777a0daee7bbb7385f9c6f0a170ea"
+    },
+    "grill-me-codex": {
+      "source": "chaseai-yt/grill-me-codex",
+      "sourceType": "github",
+      "skillPath": "skills/grill-me-codex/SKILL.md",
+      "computedHash": "a3655d1b89904c2cb34873db74ccc7a1347513241d3dc68537ef953b78e0eba1"
+    },
+    "grill-with-docs-codex": {
+      "source": "chaseai-yt/grill-me-codex",
+      "sourceType": "github",
+      "skillPath": "skills/grill-with-docs-codex/SKILL.md",
+      "computedHash": "f1dcdd3b7e02de04377ee5686ba9227c582fe41a048e8ec040782809c4581066"
+    },
+    "microsoft-foundry": {
+      "source": "microsoft/azure-skills",
+      "sourceType": "github",
+      "skillPath": "skills/microsoft-foundry/SKILL.md",
+      "computedHash": "19052fb81ee82243a4ba697d4f427ee650ff91cd1002bc7d17962d94a45fb2f3"
+    },
+    "skill-creator": {
+      "source": "anthropics/skills",
+      "sourceType": "github",
+      "skillPath": "skills/skill-creator/SKILL.md",
+      "computedHash": "5ea13a6d9f0d4bb694405d79acd00cadec0d21bb138c4dd10fcf3c500cb835c2"
+    },
+    "webapp-testing": {
+      "source": "aiskillstore/marketplace",
+      "sourceType": "github",
+      "skillPath": "skills/7spade/webapp-testing/SKILL.md",
+      "computedHash": "14860c96ec958533a426c79ca65581bf5559f56df9bdc79ec2de76811f742763"
+    }
+  }
+}

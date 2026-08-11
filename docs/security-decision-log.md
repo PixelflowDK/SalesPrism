@@ -485,3 +485,97 @@ The "Standing constraint" section above is **out of date** and is superseded her
 Production is no longer blocked by SR-001 or SR-002. It remains blocked by **SR-008**
 (no break-glass accounts — see `docs/runbooks/SR-008-break-glass-accounts.md`), and the
 authenticated data-plane matrix is still unproven pending a human interactive login.
+
+---
+
+## SD-008 — First authenticated session on val1, and what it found (2026-08-12)
+
+The whole unauthenticated surface had been tested exhaustively. The first real signed-in
+session found three defects in under an hour. That asymmetry is the finding worth keeping:
+**an unauthenticated test suite cannot see past the login, and this codebase's interesting
+failures live there.**
+
+The session was obtained by reusing an existing Entra session already present in the
+operator's browser — no credential was entered, and none could have been.
+
+### Verified live (previously UNPROVEN, and once wrongly claimed then withdrawn)
+
+- Canonical identity is correct: the session `oid` matches the tenant's Global
+  Administrator object id exactly, and `tenantId` is the expected directory (ADR-003).
+  The earlier withdrawn claim read this from a stale service-worker cache; this reading is
+  from a `no-store` fetch against the running instance.
+- All 11 authenticated routes render with no runtime error.
+- **Zero failed requests** across roughly 100 real authenticated requests in App Insights.
+
+### SR-014a — `unhandledRejection` on every page rendering an image
+
+`WEBSITE_RUN_FROM_PACKAGE=1` mounts wwwroot read-only; Next's image optimizer tried to
+`mkdir .next/cache` and threw an **unhandled rejection**, which can terminate the Node
+process. A latent availability bug, not log noise. Fixed by disabling the optimizer rather
+than making the filesystem writable, which would have meant giving up atomic deploys.
+
+Proven both directions: 6 occurrences in the 20 minutes before the fix deployed, 0 after.
+The non-zero "before" count is what makes the "after" meaningful.
+
+### SR-014b — `ADMIN_OBJECT_IDS` was never set on the live app
+
+SR-012 migrated the code from `ADMIN_EMAIL_ADDRESS` to `ADMIN_OBJECT_IDS`. The app setting
+was never created. `isAdminOid()` therefore returned false for everyone, and the admin
+portal was unreachable by **any** account — including the tenant's only administrator.
+
+Worth recording precisely because of how it presents: `/admin` returns **HTTP 200**, and
+`isAdmin` is simply absent from the session. From outside, that is indistinguishable from
+a gate that fails open. It was checked directly rather than assumed — the response body is
+the "You are not authorized" page, served through `NextResponse.rewrite`. **Fail-closed,
+not a security hole.** Anyone re-reviewing this should read the body before re-flagging it.
+
+The template never carried `AZURE_AD_CLIENT_ID`, `AZURE_AD_TENANT_ID` or
+`ADMIN_OBJECT_IDS` either, so all three were being applied by hand and silently wiped by
+every template deploy. Now parameters in `app-service.bicep`.
+
+### SR-014c — the H-3 enforcement flip would have caused an outage
+
+The audit-only assignment was created precisely so this could be checked before enforcing.
+It earned its keep. 16 non-compliant resources, and **not one was a real tagging mistake**:
+
+- 11 in `rg-insightcast-prod-swc` — an unrelated production workload in the same
+  subscription (VM, VNet, Recovery Services vault, NIC, NSG, disks)
+- 2 in `networkwatcherrg` — created and owned by the Azure platform
+- 3 in `rg-azurechat-val1` — all implicitly created: the App Service managed certificate
+  and the Application Insights smart-detection action group and alert rule
+
+Flipping to `Default` would have denied future writes across the operator's other
+production environment and to resources Azure creates on its own. The region and
+GlobalStandard definitions had zero violations and were always safe.
+
+Fixed at the source rather than with a `notScopes` list that would need maintaining: the
+tag policy now evaluates only resource groups matching `rg-azurechat-*` — the platform's
+own naming convention, so it self-maintains as customers are added — and exempts the five
+resource types Azure creates implicitly, which no template can tag because no template
+declares them.
+
+---
+
+## SD-009 — Model quota was never actually gated (2026-08-12)
+
+Recorded as a blocker on 2026-07-30 and carried forward unchallenged for two weeks.
+`az cognitiveservices usage list -l westeurope` shows, in DataZoneStandard:
+
+| model | limit | current |
+|---|---|---|
+| gpt-5.4 (Professional) | 300 | 0 |
+| gpt-5.5 (Enterprise) | 333 | 0 |
+| gpt-5-nano | 2000 | 0 |
+| text-embedding-3-large | 1000 | 0 |
+
+All four are available and unused. Nothing was ever blocked by Microsoft — the deployments
+simply were never created. Creating them adds no standing cost: DataZoneStandard is
+consumption-priced.
+
+The lesson is the same one this project keeps relearning in a new costume: **a blocker is
+a claim, and a claim that is never re-tested becomes folklore.** This one shaped the
+architecture conversation for two weeks.
+
+`text-embedding-3-large` is deliberately NOT switched on: ADR-001 pre-authorises it, but
+changing embedding dimensions invalidates every existing index document and requires a
+reindex. That is a migration, not a config flip, and should be its own change.

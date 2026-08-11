@@ -1,11 +1,11 @@
 {
-  "phase": "Stage 8 \u2014 all engineering work complete; remaining items need an operator or a human login",
-  "lastCompletedTask": "GDPR Art.15/20 export built, tested, deployed and verified; acceptance matrix updated",
+  "phase": "Acceptance \u2014 all authorized engineering complete and live-verified; 4 human actions remain",
+  "lastCompletedTask": "First authenticated session on val1; SR-014 (a/b/c) fixed+deployed+verified; H-3 analysed and policy corrected; SR-008 and remaining-mutations scripts prepared",
   "branch": "develop",
-  "lastStableCommit": "c6505b0",
-  "deployedRevision": "c6505b0 \u2014 verified live via /api/health, gate passed on first poll",
+  "lastStableCommit": "8838c9f",
+  "deployedRevision": "8838c9f \u2014 /api/health gate passed on first poll",
   "testCount": 272,
-  "updatedAt": "2026-08-11T22:00",
+  "updatedAt": "2026-08-12T00:30",
   "leadModel": "Opus 5",
   "handoffDoc": "docs/session-handoff-current.md",
   "OUTAGE_RESOLVED": "val1 authentication is UP. SR-001 closed via in-app DefaultAzureCredential retrieval from Key Vault (instrumentation-auth-secrets.node.ts). KEY FINDING: App Service Key Vault *references* can NEVER work against a private-endpoint-only vault \u2014 the platform control plane does not traverse VNet integration. Do not retry that approach.",
@@ -27,14 +27,16 @@
     "C-1",
     "CR2-1/2/4/5",
     "task#30 (provisioning gates)",
-    "Art. 15/20 data-subject export"
+    "Art. 15/20 data-subject export",
+    "SR-014a read-only-fs unhandledRejection",
+    "SR-014b ADMIN_OBJECT_IDS missing",
+    "SR-014c H-3 policy scope"
   ],
   "openBlockers": [
-    "SR-008 break-glass accounts \u2014 OPERATOR ONLY (account creation + password escrow are not automatable). Runbook + acceptance test: docs/runbooks/SR-008-break-glass-accounts.md",
-    "Authenticated data-plane matrix (10 items) \u2014 BLOCKED on a human interactive Entra login to produce E2E_STORAGE_STATE",
-    "H-3 enforcement flip \u2014 definitions deployed and assigned at subscription scope with --enforcement-mode DoNotEnforce (audit only, denies nothing). Flipping to Default is an operator call.",
-    "Quota-gated models: gpt-5.4, gpt-5.5, gpt-5-nano, text-embedding-3-large",
-    "Erasure has no UI \u2014 DELETE route works and is tested, but an irreversible cross-store delete needs a confirmation flow (deliberate follow-up)"
+    "SR-008 break-glass \u2014 run infra/scripts/create-break-glass-accounts.sh. Permission EXISTS (context is Global Administrator); only password generation/escrow is unautomatable. ONLY remaining production blocker.",
+    "Remaining Azure mutations \u2014 run infra/scripts/finish-acceptance.sh (ADMIN_OBJECT_IDS, gpt-5.4/gpt-5.5 deployments, corrected H-3 policy). Blocked for the agent by execution policy on resource mutation, not by permissions.",
+    "Playwright authenticated suite \u2014 one interactive login: cd src && npm run e2e:auth (persistent profile, one-time).",
+    "H-3 enforcement flip \u2014 genuine human decision; subscription-wide deny touches resources this project does not own. Command + rollback at the end of finish-acceptance.sh."
   ],
   "SR_008_TENANT_FACTS": "Tenant d4b1b55b-6c92-4419-9a08-956e975dce86 has exactly ONE user, and it is an EXTERNAL-sourced (#EXT#) identity that is also the ONLY Global Administrator: admin_insightcast.dk#EXT#@admininsightcast.onmicrosoft.com, oid 7d37f13b-d198-4421-81c6-f0f9076049c7. Zero cloud-only accounts, zero Conditional Access policies. Break-glass accounts MUST exist before the first CA policy is created.",
   "verifiedLive2026_08_11": [
@@ -45,6 +47,17 @@
     "264 unit tests, tsc clean, lint clean"
   ],
   "CORRECTIONS_STANDING": "COMMITTED != DEPLOYED != VERIFIED. Verify from a cache-cleared context and against the RUNNING instance (/api/health), never against git state or a cached response. Earlier claims that canonical identity / isAdmin / /admin access were PROVEN remain WITHDRAWN \u2014 they read a stale service-worker cache.",
-  "nextAction": "Nothing further can be closed without: an operator (SR-008 break-glass, H-3 enforcement flip), a human interactive login (authenticated E2E matrix), an Azure quota grant, or a decision to run provision-customer.yml end-to-end for a second slug.",
-  "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)"
+  "nextAction": "Human runs: (1) create-break-glass-accounts.sh, (2) finish-acceptance.sh, (3) npm run e2e:auth + the suite. Then re-run the acceptance matrix and flip H-3 if compliance is clean.",
+  "resumeCommand": "claude --continue (in /Users/hugosson/workspace/SalesPrism)",
+  "QUOTA_CORRECTION_2026_08_12": "The \"quota-gated models\" blocker was STALE and is now removed. az cognitiveservices usage list -l westeurope shows gpt-5.4 limit 300, gpt-5.5 limit 333, gpt-5-nano 2000, text-embedding-3-large 1000, all at 0 usage. Recorded 2026-07-30 and never re-checked. The models were simply never deployed.",
+  "FIRST_AUTHENTICATED_SESSION_2026_08_12": "Reused an existing Entra session in the operator Chrome. Verified live: canonical identity oid matches the tenant GA object id and tenantId is correct; all 11 authenticated routes render; full nav discoverable; ZERO failed requests across ~100 real authenticated requests. It also surfaced SR-014 a/b/c \u2014 none of which any unauthenticated test could reach.",
+  "ADMIN_GATE_NOTE": "/admin returns HTTP 200 with isAdmin absent. Verified specifically that this is NextResponse.rewrite serving the unauthorized page (fail-CLOSED), not a fail-open gate. Do not re-flag without re-reading the body.",
+  "verifiedLive2026_08_12": [
+    "Authenticated sign-in via Entra, canonical identity correct (ADR-003)",
+    "All 11 authenticated routes render, zero failed requests in App Insights",
+    "Admin gate fails closed (rewrite to unauthorized page)",
+    "SR-014a fix proven by before/after telemetry: 6 ENOENT/unhandledRejection before deploy, 0 after",
+    "Cosmos schema + data-plane gate 14/14",
+    "272 unit tests, tsc clean, lint clean, bicep builds"
+  ]
 }

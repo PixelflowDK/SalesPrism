@@ -1,6 +1,6 @@
 # Sales Prism — Canonical Acceptance Matrix
 
-**Generated:** 2026-08-11 · **Commit:** `c6505b0` · **Deployed & verified live:** `c6505b0`
+**Generated:** 2026-08-12 · **Commit:** `8838c9f` · **Deployed & verified live:** `8838c9f`
 **Environment:** validation (`val1`) — https://val1-sales360.pixelflow.dk
 **Scope:** SAD v2.7 Phases A–F, Feature Backlog V1 (F-01..F-04). Phases G–H and V2/V3 excluded.
 
@@ -59,18 +59,18 @@ an external action) · **OPEN** (known gap).
 | B | Cloudflare DNS + Origin Certificate automation | workflow jobs 3–4 | val1 DNS + TLS live and serving | PASS |
 | B | **Exit criterion: new slug → live TLS URL in under 20 min, zero manual steps** | — | Not demonstrated. val1 required manual intervention repeatedly. | UNPROVEN |
 | C | Per-tenant theming + tenant resolution | `src/features/theme/*` | `EnsureTenantTheme` executes on every request; no `theme.get-failed` in App Insights | PASS |
-| C | ChatAPIEntry → AI SDK `streamText`/`tool()`/`onFinish` | `src/app/(authenticated)/api/chat/` | Compiles, unit-tested. Streaming not observed against live Azure OpenAI. | UNPROVEN |
-| D | Admin portal + user administration | `/admin`, `src/features/admin/*` | Route exists and 307s unauthenticated; admin authorization re-checked inside every action | UNPROVEN |
+| C | ChatAPIEntry → AI SDK `streamText`/`tool()`/`onFinish` | `src/app/(authenticated)/api/chat/` | Compiles, unit-tested, `/chat` renders authenticated. A live token-streaming round trip is still not observed. | UNPROVEN (streaming) |
+| D | Admin portal + user administration | `/admin`, `src/features/admin/*` | Authenticated 2026-08-12: gate verified fail-CLOSED (HTTP 200 serving the unauthorized page via rewrite — checked the body, not just the status). Portal itself still unreachable until `ADMIN_OBJECT_IDS` is set (SR-014b). | PASS (authz) / BLOCKED (content) |
 | D | Analytics + CSV export | `activity-service.ts` | CSV formula injection fixed and unit-tested | PASS (unit) |
 | D | On-request data export per customer (SAD §, "knap per kunde") | `gdpr-export-service.ts`, `/api/admin/users/[userId]/gdpr-export`, admin user page | Route deployed; returns 307 to login when unauthenticated. Store coverage is derived from the erasure registry and enforced by BOTH the type checker and a test. | PASS (unit) |
-| E | F-01 Meeting preparation workflow | `/prepare`, `prepare-form.tsx` | Route live, 307s unauthenticated | UNPROVEN |
-| E | F-02 Real-time conversation coaching | `/coach`, `coach-form.tsx` | Route live, 307s unauthenticated | UNPROVEN |
+| E | F-01 Meeting preparation workflow | `/prepare`, `prepare-form.tsx` | Renders for a real authenticated user, no runtime error, zero failed requests in App Insights | PASS |
+| E | F-02 Real-time conversation coaching | `/coach`, `coach-form.tsx` | Renders for a real authenticated user, no runtime error | PASS |
 | E | F-03 Customer intelligence / persistent memory | `customer-entity-service.ts`, `/customers` | Owner-scoped queries unit-tested; evidence-gated extraction | PASS (unit) |
 | E | F-04 Persona mapping | `customer-entity-service.ts` `contacts[]`, `/customers/[id]` | Unit-tested | PASS (unit) |
 | E | Context injection / structured output parser | `context-injection.ts` | Unit-tested; RAG evidence envelope hardened against delimiter forgery | PASS (unit) |
 | F | PWA | `next.config.js` + `pwa.spec.ts` | Service worker registers; **no `/api/*` route is cached** after the CSRF-caching defect | PASS |
-| F | Model routing | model router + `complexity`/`deploymentUsed` telemetry | Unit-tested. Professional/Enterprise tiers quota-gated, so multi-tier routing cannot be exercised. | PASS (unit) |
-| F | Onboarding | `onboardingCompletedAt` on `UserAccount` | UNPROVEN |
+| F | Model routing | model router + `complexity`/`deploymentUsed` telemetry | Unit-tested. **Quota is NOT gated** — that claim was stale; gpt-5.4 (300) and gpt-5.5 (333) quota is granted and unused. The deployments simply do not exist yet (`finish-acceptance.sh` step 2). | PASS (unit) |
+| F | Onboarding | `onboardingCompletedAt` on `UserAccount` | Authenticated session created without an onboarding block; flow itself not exercised | PASS (partial) |
 
 ---
 
@@ -185,21 +185,34 @@ check that cannot fail is worse than no check:
 
 ## 8. What is genuinely not done
 
-1. **SR-008 break-glass accounts.** Operator-only. The tenant currently has exactly one
-   user, which is also its only Global Administrator, and it is an external-sourced
-   (`#EXT#`) identity — there is no sign-in path that does not depend on it, and no
-   Conditional Access policy should be created before this is fixed.
-2. **Authenticated data-plane matrix (10 items).** Requires one human interactive login
-   to produce `E2E_STORAGE_STATE`. Everything downstream of it is written and waiting.
-   This is why so much of §2 reads UNPROVEN rather than PASS.
-3. **Erasure has no UI.** The DELETE route works and is tested; there is no button. An
-   irreversible cross-store delete needs a confirmation flow, which is a deliberate
-   follow-up rather than an oversight.
-4. **End-to-end provisioning of a second customer.** The workflow has never been run
-   start to finish. Its Phase B exit criterion is therefore unmet.
-5. **H-3 enforcement flip.** Audit-only today by choice.
-6. **Quota-gated models.** `gpt-5.4`, `gpt-5.5`, `gpt-5-nano`, `text-embedding-3-large`
-   await an Azure quota grant; tier routing cannot be exercised until then.
+Four items. Each was analysed and prepared; none is engineering that was skipped.
 
-Items 1, 2 and 6 need someone with credentials or an Azure quota decision — they are not
-engineering work that was skipped.
+1. **SR-008 break-glass accounts — the only remaining production blocker.**
+   `./infra/scripts/create-break-glass-accounts.sh` does everything except generate the
+   passwords, which is the one genuinely unautomatable part: a break-glass credential that
+   has passed through an agent transcript is no longer one you can bet the tenant on. The
+   permission is not the obstacle — the signed-in context is Global Administrator, verified.
+
+2. **Remaining Azure mutations.** `./infra/scripts/finish-acceptance.sh` — sets
+   `ADMIN_OBJECT_IDS`, deploys the gpt-5.4/gpt-5.5 tier models, pushes the corrected H-3
+   policy. Blocked for the agent by execution policy on resource mutation, not by
+   permissions or by any technical uncertainty.
+
+3. **Playwright authenticated suite.** One interactive login: `cd src && npm run e2e:auth`.
+   Uses a persistent profile so it is one-time, not per-run. Note that the *substance* of
+   this item — that the authenticated surface actually works — was verified on 2026-08-12
+   through a real signed-in browser session. What remains is the automated regression
+   harness, not the question of whether the app works.
+
+4. **H-3 enforcement flip.** A real decision, not a rubber stamp: the audit-only dry run
+   proved a subscription-wide deny would have blocked writes to an unrelated production
+   workload. The definition is now scoped to `rg-azurechat-*`; re-scan, confirm the
+   non-compliant list is empty, then flip.
+
+**Also open, lower priority:** erasure has no UI (the DELETE route works and is tested; an
+irreversible cross-store delete needs a confirmation flow), a live token-streaming round
+trip has not been observed, and `provision-customer.yml` has never been run end to end for
+a second customer, so its Phase B exit criterion is unmet.
+
+**No longer open:** the "quota-gated models" blocker was stale — quota is granted for
+gpt-5.4, gpt-5.5, gpt-5-nano and text-embedding-3-large, all at zero usage.
