@@ -1,11 +1,11 @@
 {
-  "phase": "NOT READY FOR PRODUCTION \u2014 2 production gates open (SR-008 enrollment + P1; H-3 enforcement)",
-  "lastCompletedTask": "Final gauntlet run; Entra Free licensing constraint discovered and documented (SD-010); H-3 classified as production gate from SAD 16.2 (SD-011)",
+  "phase": "NOT READY FOR PRODUCTION \u2014 2 gates: SR-008 authenticator enrollment, H-3 enforcement flip",
+  "lastCompletedTask": "Licensing claim independently verified against Microsoft Learn and WITHDRAWN (SD-012) \u2014 no P1 purchase needed",
   "branch": "develop",
   "lastStableCommit": "3e7a0ed",
   "deployedRevision": "28b94c2 (app code) \u2014 3e7a0ed adds infra scripts only",
   "testCount": 275,
-  "updatedAt": "2026-08-12T09:10",
+  "updatedAt": "2026-08-12T17:40",
   "leadModel": "Opus 5",
   "handoffDoc": "docs/session-handoff-current.md",
   "OUTAGE_RESOLVED": "val1 authentication is UP. SR-001 closed via in-app DefaultAzureCredential retrieval from Key Vault (instrumentation-auth-secrets.node.ts). KEY FINDING: App Service Key Vault *references* can NEVER work against a private-endpoint-only vault \u2014 the platform control plane does not traverse VNet integration. Do not retry that approach.",
@@ -39,9 +39,8 @@
     "Entra log routing + break-glass alert"
   ],
   "openBlockers": [
-    "SR-008 (PRODUCTION GATE) \u2014 accounts enabled, cloud-only, permanent GA (1 GA -> 3). Needs: human authenticator enrollment (irreducible), and Entra ID P1 for the CA-exclusion and alert-monitoring criteria.",
-    "H-3 (PRODUCTION GATE) \u2014 assignment still DoNotEnforce. Analysis clean. Blocked by SAD operator-only designation + agent classifier.",
-    "Playwright E2E_STORAGE_STATE \u2014 needs real credential entry in a fresh profile; substance verified via authenticated browser instead."
+    "SR-008 (PRODUCTION GATE) \u2014 accounts enabled, cloud-only, permanent GA (1 GA -> 3), monitoring configured. Needs: human authenticator enrollment via Entra portal (TAP -> passkey), then agent verification + emergency sign-in test. NO licence purchase required (SD-012).",
+    "H-3 (PRODUCTION GATE) \u2014 assignment still DoNotEnforce. Analysis clean (107/107). Blocked by SAD 16.2 operator-only designation + agent classifier. Needs one Azure Portal field change."
   ],
   "SR_008_TENANT_FACTS": "Tenant d4b1b55b-6c92-4419-9a08-956e975dce86 has exactly ONE user, and it is an EXTERNAL-sourced (#EXT#) identity that is also the ONLY Global Administrator: admin_insightcast.dk#EXT#@admininsightcast.onmicrosoft.com, oid 7d37f13b-d198-4421-81c6-f0f9076049c7. Zero cloud-only accounts, zero Conditional Access policies. Break-glass accounts MUST exist before the first CA policy is created.",
   "verifiedLive2026_08_11": [
@@ -89,5 +88,6 @@
     "modelDeployments": "PASS \u2014 gpt-5.4-mini, gpt-5.4, gpt-5.5, text-embedding-3-small all DataZoneStandard/Succeeded",
     "unitTests": "PASS \u2014 275 across 31 files, tsc + lint clean",
     "e2e": "PASS \u2014 12/12 against live val1 incl. zero critical/serious axe violations"
-  }
+  },
+  "LICENSING_CORRECTED_SD012": "SD-010 was WRONG. Microsoft Learn licensing table: Sign-in logs AND Audit logs = Yes on Entra ID Free. Azure Monitor integration page lists NO licence prerequisite. AuditLogs rows ARE arriving via the diagnostic setting. SigninLogs empty only because no interactive sign-in completed after activation (verified signedIn:false). TAP and passkey/FIDO2 also need no premium licence. ONLY Conditional Access requires P1 (verbatim in Microsoft docs) \u2014 and that criterion is conditional on CA being available, so it is satisfied by non-applicability. NO PURCHASE REQUIRED."
 }
