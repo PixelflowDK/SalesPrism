@@ -679,3 +679,71 @@ That is a real positive test rather than an argued one: under `Default` that cre
 have been **denied**. The resource has been tagged and is compliant again. It also
 demonstrates the enforcement's practical cost — every automation path must tag what it
 creates, including ad-hoc operator scripts.
+
+---
+
+## SD-012 — CORRECTION to SD-010: the P1 licensing claim was wrong (2026-08-12)
+
+SD-010 asserted that Entra sign-in log export to Log Analytics requires Entra ID P1, and
+concluded that `alert-breakglass-signin` could never fire without a purchase. **That was
+wrong, and the reasoning behind it was exactly the kind this project keeps having to
+correct.**
+
+I inferred a licensing rule from two pieces of circumstantial evidence: an empty
+`SigninLogs` table, and an `Authentication_RequestFromNonPremiumTenantOrB2CTenant` error.
+That error came from the **authentication methods registration report**, which is a "Usage
+and insights" capability and genuinely *is* P1-gated. I generalised it to a different
+feature without checking. Empty telemetry is not evidence of a licensing restriction; it
+is evidence of no data.
+
+### What the documentation actually says
+
+Microsoft Learn, *Microsoft Entra licensing* (`/entra/fundamentals/licensing`, updated
+2026-07-28) and *Access activity logs* (`/entra/identity/monitoring-health/
+howto-access-activity-logs`, updated 2026-06-30) both carry this table:
+
+| Capability | Microsoft Entra ID Free | P1 or P2 |
+|---|---|---|
+| Audit logs | **Yes** | Yes |
+| **Sign-in logs** | **Yes** | Yes |
+| Provisioning logs | No | Yes |
+| Health | No | Yes |
+| Microsoft Graph activity logs | No | Yes |
+| Usage and insights | No | Yes |
+
+*Integrate Microsoft Entra logs with Azure Monitor logs* lists its prerequisites as an
+Azure subscription, the Security Administrator role, a Log Analytics workspace and
+permission to read it — **no licence requirement whatsoever**.
+
+### Corroborating evidence from the live tenant
+
+`AuditLogs` rows **are arriving** in `law-azurechat-val1` through the very diagnostic
+setting SD-010 declared non-functional. The pipeline works on this Free tenant.
+
+`SigninLogs` is still empty for a mundane reason, now confirmed: no interactive sign-in has
+completed since the diagnostic setting activated. The sign-in intended as a test did not
+go through — session state showed `signedIn: false` afterwards. Absence of data, not
+absence of capability.
+
+### Corrected per-feature findings
+
+| SR-008 control | Requires P1? | Source |
+|---|---|---|
+| Export SignInLogs/AuditLogs to Log Analytics | **No** | licensing table above; integration page lists no licence prerequisite |
+| Alert on emergency-account sign-ins | **No** | it is an Azure Monitor scheduled query rule over workspace data — Azure Monitor pricing, not an Entra licence |
+| Passkey (FIDO2) authentication method | **No** | not listed as premium in the Authentication licensing table |
+| Temporary Access Pass | **No** | `howto-authentication-temporary-access-pass` states role requirements only, no licence section |
+| **Conditional Access** | **Yes** | verbatim: "Microsoft Entra Conditional Access — Using this feature requires Microsoft Entra ID P1 licenses." |
+
+### Consequence: no purchase is required
+
+Nine of the ten SR-008 criteria are achievable on Entra ID Free. The tenth — "appropriate
+Conditional Access treatment" — is written as *conditional on CA being available*. CA
+cannot exist on a Free tenant, so there is no policy capable of blocking an emergency
+sign-in and nothing to exclude the accounts from. The criterion is satisfied by
+non-applicability, not deferred.
+
+**No Entra ID P1 purchase is needed to close SR-008.** SD-010's "commercial prerequisite"
+conclusion is withdrawn. The standing rule from the runbook still applies for the future:
+if P1 is ever purchased and Conditional Access is enabled, both break-glass accounts must
+be excluded from the very first policy created.
