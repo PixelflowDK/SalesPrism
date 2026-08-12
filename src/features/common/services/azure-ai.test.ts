@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
-const createAzureMock = vi.hoisted(() => vi.fn(() => vi.fn()));
+type AzureOptions = { apiVersion?: string; resourceName?: string };
+const createAzureMock = vi.hoisted(() =>
+  vi.fn((_options: AzureOptions) => vi.fn())
+);
 vi.mock("@ai-sdk/azure", () => ({ createAzure: createAzureMock }));
 vi.mock("@azure/identity", () => ({
   DefaultAzureCredential: class {},
@@ -31,12 +34,18 @@ describe("SR-015 — Azure OpenAI API version default", () => {
     process.env.AZURE_OPENAI_API_INSTANCE_NAME = "oai-test";
     process.env.AZURE_OPENAI_CHAT_DEPLOYMENT = "chat";
     process.env.AZURE_OPENAI_EMBEDDING_DEPLOYMENT = "embed";
-    delete process.env.AZURE_OPENAI_API_VERSION;
+    // `delete process.env.X` trips TS2790 under this tsconfig, and assigning
+    // `undefined` would set the literal string "undefined" — which the code
+    // under test would happily use as an API version.
+    Reflect.deleteProperty(process.env, "AZURE_OPENAI_API_VERSION");
   });
 
   afterEach(() => {
-    if (original === undefined) delete process.env.AZURE_OPENAI_API_VERSION;
-    else process.env.AZURE_OPENAI_API_VERSION = original;
+    if (original === undefined) {
+      Reflect.deleteProperty(process.env, "AZURE_OPENAI_API_VERSION");
+    } else {
+      process.env.AZURE_OPENAI_API_VERSION = original;
+    }
   });
 
   it("defaults to the version-less v1 surface, never a dated preview", async () => {
@@ -44,7 +53,7 @@ describe("SR-015 — Azure OpenAI API version default", () => {
     getChatModel();
 
     expect(createAzureMock).toHaveBeenCalledTimes(1);
-    const apiVersion = createAzureMock.mock.calls[0][0].apiVersion as string;
+    const apiVersion = createAzureMock.mock.calls[0]![0].apiVersion as string;
 
     expect(apiVersion).toBe("v1");
     // The actual defect shape: a YYYY-MM-DD[-preview] string. Asserting the
@@ -59,7 +68,7 @@ describe("SR-015 — Azure OpenAI API version default", () => {
     const { getChatModel } = await import("./azure-ai");
     getChatModel();
 
-    expect(createAzureMock.mock.calls[0][0].apiVersion).toBe("2026-05-01-preview");
+    expect(createAzureMock.mock.calls[0]![0].apiVersion).toBe("2026-05-01-preview");
   });
 
   it("the Bicep default matches the code default — they drifted apart once already", () => {
