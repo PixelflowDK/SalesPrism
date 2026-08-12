@@ -1,41 +1,50 @@
 #!/usr/bin/env bash
 # create-break-glass-accounts.sh — SR-008
 #
-# Creates the two emergency-access (break-glass) accounts, assigns Global
-# Administrator to both, and runs the acceptance test.
+# Creates the two emergency-access (break-glass) accounts DISABLED and with no
+# credential anyone knows, assigns Global Administrator to both, and runs the
+# acceptance test.
 #
-# ── Why a human runs this instead of the agent ──────────────────────────
+# ── The credential problem, and how this avoids it ──────────────────────
 #
-# Not a permissions problem. The signed-in context already holds Global
-# Administrator, which is sufficient to create users — that was verified
-# before this script was written.
+# A break-glass password must never pass through a transcript, a log, a shell
+# history or a file. But Microsoft Graph requires a `passwordProfile` when
+# creating a user, so *some* password value has to exist at creation time.
 #
-# The reason is the password. A break-glass credential's entire value is that
-# it is reachable when everything else has failed AND that it has never been
-# handled by any system that could retain it. A password generated inside an
-# agent's tool output has passed through a transcript, and is no longer a
-# credential you can bet the tenant on. So the generation happens here, in
-# your shell, from `openssl rand`, and the value is shown to you exactly once.
+# This script resolves that by making the created password deliberately
+# worthless and unknowable:
 #
-# Everything else — naming, domain choice, role assignment, verification —
-# is automated below so the human part is: run this, seal two envelopes.
+#   * it is generated from /dev/urandom inside this process,
+#   * it is piped straight into the Graph request body on stdin — never an
+#     argv element (visible in `ps`), never echoed, never written to disk,
+#   * it is discarded when the process exits, and
+#   * the accounts are created with `accountEnabled: false`, so the value
+#     cannot be used to sign in even if it were somehow recovered.
+#
+# The result is an account that exists, holds its role, and is inert. The human
+# then performs exactly one custody action per account — set a password and
+# enable it — through the Entra portal, where the value is chosen by a person
+# and goes straight into escrow. No automated system ever sees the real secret.
+#
+# This is why the script prints no password and offers no "escrow file": a
+# plaintext credential written somewhere convenient is not escrow, it is a
+# second copy of the secret.
 #
 # ── Usage ───────────────────────────────────────────────────────────────
 #
 #   az login          # as a Global Administrator of the target tenant
 #   ./infra/scripts/create-break-glass-accounts.sh
 #
-# Idempotent: re-running when the accounts already exist skips creation and
-# re-verifies. It never resets an existing account's password, so it cannot
-# silently invalidate an escrowed envelope.
+# Idempotent. Never resets an existing account's password, so it cannot
+# invalidate a credential already in escrow.
 
 set -euo pipefail
 
 readonly INITIAL_DOMAIN="admininsightcast.onmicrosoft.com"
 readonly EXPECTED_TENANT="d4b1b55b-6c92-4419-9a08-956e975dce86"
-# Global Administrator — a well-known fixed template id, identical in every
-# tenant. Hard-coded deliberately: resolving it by display name would break
-# under a localised directory.
+# Global Administrator — a fixed template id, identical in every tenant.
+# Hard-coded deliberately: resolving by display name breaks on a localised
+# directory.
 readonly GA_ROLE_TEMPLATE_ID="62e90394-69f5-4237-9190-012177145e10"
 
 readonly ACCOUNTS=(
@@ -45,24 +54,20 @@ readonly ACCOUNTS=(
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
-# ---------------------------------------------------------------------------
-# 0. Refuse to run against the wrong tenant.
-# ---------------------------------------------------------------------------
 CURRENT_TENANT="$(az account show --query tenantId -o tsv 2>/dev/null || true)"
 [[ "$CURRENT_TENANT" == "$EXPECTED_TENANT" ]] \
-  || die "signed in to tenant '${CURRENT_TENANT:-none}', expected ${EXPECTED_TENANT}. Run 'az login' against the right tenant."
+  || die "signed in to tenant '${CURRENT_TENANT:-none}', expected ${EXPECTED_TENANT}."
 
 az rest --method GET --url "https://graph.microsoft.com/v1.0/me/memberOf?\$select=displayName" -o json \
   | grep -q "Global Administrator" \
-  || die "the signed-in account is not a Global Administrator; it cannot create users or assign roles."
+  || die "the signed-in account is not a Global Administrator."
 
 echo "Tenant ${EXPECTED_TENANT} — Global Administrator confirmed."
 echo
 
 # ---------------------------------------------------------------------------
-# 1. Ensure the Global Administrator role is activated in this directory.
-#    A role that has never been used exists only as a template and has no
-#    directoryRole object to add members to.
+# Activate the Global Administrator role if it has never been used. A role with
+# no directoryRole object cannot take members.
 # ---------------------------------------------------------------------------
 GA_ROLE_ID="$(az rest --method GET \
   --url "https://graph.microsoft.com/v1.0/directoryRoles?\$filter=roleTemplateId eq '${GA_ROLE_TEMPLATE_ID}'" \
@@ -78,62 +83,53 @@ fi
 echo "Global Administrator role id: ${GA_ROLE_ID}"
 echo
 
-# ---------------------------------------------------------------------------
-# 2. Create each account if absent, then assign the role.
-# ---------------------------------------------------------------------------
-declare -a CREATED_UPNS=()
-declare -a CREATED_PASSWORDS=()
+CREATED_ANY=0
 
 for entry in "${ACCOUNTS[@]}"; do
   short="${entry%%:*}"
   display="${entry#*:}"
   upn="${short}@${INITIAL_DOMAIN}"
 
-  existing_id="$(az rest --method GET \
+  user_id="$(az rest --method GET \
     --url "https://graph.microsoft.com/v1.0/users?\$filter=userPrincipalName eq '${upn}'&\$select=id" \
     -o json | python3 -c 'import json,sys; v=json.load(sys.stdin).get("value",[]); print(v[0]["id"] if v else "")')"
 
-  if [[ -n "$existing_id" ]]; then
-    echo "${upn} already exists (${existing_id}) — not touching its password."
-    user_id="$existing_id"
+  if [[ -n "$user_id" ]]; then
+    echo "${upn} already exists (${user_id}) — password untouched."
   else
-    # 40 chars from openssl. Generated here, in your shell. Never logged, never
-    # written to a file, never passed as an argv element (which would be
-    # visible in `ps`) — piped to az via a request body on stdin.
-    password="$(LC_ALL=C tr -dc 'A-Za-z0-9!@#%^&*()-_=+' </dev/urandom | head -c 40)"
-
-    body="$(python3 -c '
-import json,sys
-upn, display, pwd = sys.argv[1], sys.argv[2], sys.argv[3]
+    # Built and piped entirely in-process. The password never becomes an argv
+    # element, never reaches stdout, and never touches disk.
+    user_id="$(python3 -c '
+import json, secrets, string, sys
+alphabet = string.ascii_letters + string.digits + "!@#%^&*()-_=+"
+throwaway = "".join(secrets.choice(alphabet) for _ in range(64))
+upn, display = sys.argv[1], sys.argv[2]
 print(json.dumps({
-  "accountEnabled": True,
+  # Created DISABLED. The throwaway password below is unknown to every human
+  # and every system the moment this process exits; disabling the account
+  # means it is not even a theoretical sign-in path until a person sets a real
+  # credential and enables it.
+  "accountEnabled": False,
   "displayName": display,
   "mailNickname": upn.split("@")[0],
   "userPrincipalName": upn,
   "passwordProfile": {
-    # Break-glass credentials must NOT expire or require a change at sign-in:
-    # a forced password change during a real emergency is one more thing that
-    # can fail when everything else already has.
+    # Break-glass credentials must not expire or demand a change mid-emergency.
     "forceChangePasswordNextSignIn": False,
-    "password": pwd,
+    "password": throwaway,
   },
   "passwordPolicies": "DisablePasswordExpiration",
-}))' "$upn" "$display" "$password")"
+}))' "$upn" "$display" \
+      | az rest --method POST \
+          --url "https://graph.microsoft.com/v1.0/users" \
+          --headers "Content-Type=application/json" \
+          --body @- \
+          -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
 
-    user_id="$(printf '%s' "$body" | az rest --method POST \
-      --url "https://graph.microsoft.com/v1.0/users" \
-      --headers "Content-Type=application/json" \
-      --body @- \
-      -o json | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-
-    echo "Created ${upn} (${user_id})"
-    CREATED_UPNS+=("$upn")
-    CREATED_PASSWORDS+=("$password")
-    unset password
+    echo "Created ${upn} (${user_id}) — DISABLED, credential unknown by design."
+    CREATED_ANY=1
   fi
 
-  # Role assignment is idempotent in effect: Graph returns 400 if the member is
-  # already present, which is not a failure for our purposes.
   assign_body="{\"@odata.id\":\"https://graph.microsoft.com/v1.0/directoryObjects/${user_id}\"}"
   if az rest --method POST \
       --url "https://graph.microsoft.com/v1.0/directoryRoles/${GA_ROLE_ID}/members/\$ref" \
@@ -141,37 +137,12 @@ print(json.dumps({
       --body "$assign_body" -o none 2>/dev/null; then
     echo "  Global Administrator assigned."
   else
-    echo "  Global Administrator already assigned (or assignment rejected as duplicate)."
+    echo "  Global Administrator already assigned."
   fi
 done
 
 # ---------------------------------------------------------------------------
-# 3. Show the passwords once, for immediate physical escrow.
-# ---------------------------------------------------------------------------
-if (( ${#CREATED_PASSWORDS[@]} > 0 )); then
-  echo
-  echo "================================================================"
-  echo " PASSWORDS — SHOWN ONCE. They are not stored anywhere."
-  echo " Print each, seal it in its own tamper-evident envelope, and put"
-  echo " the two envelopes in TWO DIFFERENT physical locations."
-  echo " Do not put these in a password manager that this tenant's SSO"
-  echo " protects — that is a circular dependency that fails exactly when"
-  echo " you need it."
-  echo "================================================================"
-  for i in "${!CREATED_UPNS[@]}"; do
-    echo
-    echo "  ${CREATED_UPNS[$i]}"
-    echo "  ${CREATED_PASSWORDS[$i]}"
-  done
-  echo
-  echo "================================================================"
-  echo " Clear your scrollback when done:  printf '\\033[3J'"
-  echo "================================================================"
-  echo
-fi
-
-# ---------------------------------------------------------------------------
-# 4. Acceptance test — the same checks as the runbook.
+# Acceptance test — every property that can be checked without a secret.
 # ---------------------------------------------------------------------------
 echo
 echo "-- acceptance test --"
@@ -180,20 +151,22 @@ pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*" >&2; FAILURES=$((FAILURES+1)); }
 
 users_json="$(az rest --method GET \
-  --url "https://graph.microsoft.com/v1.0/users?\$filter=startswith(userPrincipalName,'breakglass-')&\$select=userPrincipalName,accountEnabled,onPremisesSyncEnabled,userType" \
+  --url "https://graph.microsoft.com/v1.0/users?\$filter=startswith(userPrincipalName,'breakglass-')&\$select=id,userPrincipalName,accountEnabled,onPremisesSyncEnabled,userType" \
   -o json)"
 
 count="$(printf '%s' "$users_json" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("value",[])))')"
-[[ "$count" == "2" ]] && pass "2 break-glass accounts exist" || fail "expected 2 break-glass accounts, found ${count}"
+[[ "$count" == "2" ]] && pass "2 break-glass accounts exist" || fail "expected 2, found ${count}"
 
 printf '%s' "$users_json" | python3 -c '
 import json,sys
 for u in json.load(sys.stdin).get("value",[]):
     upn = u["userPrincipalName"]
-    ok = (u.get("accountEnabled") is True
-          and u.get("onPremisesSyncEnabled") in (None, False)
-          and upn.endswith("admininsightcast.onmicrosoft.com"))
-    print(("PASS: " if ok else "FAIL: ") + upn + " cloud-only, enabled, on the initial domain")
+    cloud_only = u.get("onPremisesSyncEnabled") in (None, False)
+    initial_domain = upn.endswith("admininsightcast.onmicrosoft.com")
+    print(("PASS: " if (cloud_only and initial_domain) else "FAIL: ")
+          + upn + " cloud-only, on the initial domain")
+    state = "ENABLED" if u.get("accountEnabled") else "disabled (awaiting credential custody)"
+    print(f"      state: {state}")
 '
 
 members="$(az rest --method GET \
@@ -201,23 +174,19 @@ members="$(az rest --method GET \
 bg_admins="$(printf '%s' "$members" | python3 -c '
 import json,sys
 print(sum(1 for m in json.load(sys.stdin).get("value",[]) if str(m.get("userPrincipalName","")).startswith("breakglass-")))')"
-[[ "$bg_admins" == "2" ]] && pass "both break-glass accounts hold Global Administrator" \
-  || fail "expected 2 break-glass Global Administrators, found ${bg_admins}"
+[[ "$bg_admins" == "2" ]] && pass "both hold Global Administrator" || fail "expected 2 break-glass GAs, found ${bg_admins}"
 
 total_admins="$(printf '%s' "$members" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("value",[])))')"
-(( total_admins >= 3 )) && pass "tenant now has ${total_admins} Global Administrators (was 1)" \
-  || fail "expected at least 3 Global Administrators, found ${total_admins}"
+(( total_admins >= 3 )) && pass "tenant has ${total_admins} Global Administrators (was 1)" \
+  || fail "expected >=3 Global Administrators, found ${total_admins}"
 
-# Conditional Access must exclude both accounts. Vacuously true while no
-# policy exists — which is the state this is meant to be run in. Re-run this
-# script's check (or the runbook's) after creating the FIRST policy.
 ca="$(az rest --method GET --url "https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies" -o json 2>/dev/null || echo '{"value":[]}')"
 ca_count="$(printf '%s' "$ca" | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("value",[])))')"
 if [[ "$ca_count" == "0" ]]; then
   pass "no Conditional Access policies exist — nothing can lock these accounts out yet"
-  echo "      REMINDER: every CA policy you create from now on must exclude both accounts."
+  echo "      Every CA policy created from now on MUST exclude both object ids."
 else
-  echo "      ${ca_count} CA policies exist — verify both break-glass object ids appear in excludeUsers on EACH."
+  echo "      ${ca_count} CA policies exist — verify both object ids are in excludeUsers on EACH."
 fi
 
 echo
@@ -225,5 +194,28 @@ if (( FAILURES > 0 )); then
   echo "${FAILURES} check(s) failed."
   exit 1
 fi
-echo "SR-008 acceptance test passed."
-echo "Record the envelope seal serial numbers in docs/security-decision-log.md."
+
+if (( CREATED_ANY == 1 )); then
+  cat <<'NEXT'
+
+────────────────────────────────────────────────────────────────────────
+REMAINING HUMAN STEP — credential custody. Two accounts, one action each.
+
+Entra portal → Users → breakglass-a → Reset password
+  - choose a long random password YOURSELF (do not let the portal auto-generate
+    into a screenshot you then forget about)
+  - clear "User must change password at next sign-in"
+  - then Properties → set Account enabled = Yes
+  - print it, seal it in a tamper-evident envelope
+
+Repeat for breakglass-b. Store the two envelopes in TWO DIFFERENT physical
+locations. Do NOT put them in a password manager that this tenant's SSO
+protects — that is a circular dependency that fails exactly when you need it.
+
+Then record the envelope seal serial numbers in docs/security-decision-log.md
+and re-run this script; it will report both accounts as ENABLED.
+────────────────────────────────────────────────────────────────────────
+NEXT
+fi
+
+echo "SR-008 automated portion complete."
