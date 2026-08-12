@@ -115,7 +115,13 @@ param embeddingModelCapacity int = 30
 param embeddingModelDimensions int = 1536
 
 @description('Azure OpenAI REST API version consumed by src/features/common/services/azure-ai.ts (AZURE_OPENAI_API_VERSION).')
-param openAiApiVersion string = '2025-01-01-preview'
+// SR-015: `v1` is Azure OpenAI's version-less API surface and the AI SDK's own
+// default. This previously pinned '2025-01-01-preview', which the gpt-5.x
+// deployments reject outright ("API version not supported") — every chat
+// request failed. A dated preview has to be bumped by hand for each new model
+// and nothing fails until a customer sends a message; `v1` removes that class
+// of breakage. Override per-customer only for a deliberate pin.
+param openAiApiVersion string = 'v1'
 
 @description('Azure AI Search index name for this customer (AZURE_SEARCH_INDEX_NAME).')
 param searchIndexName string = 'idx-${customerSlug}'

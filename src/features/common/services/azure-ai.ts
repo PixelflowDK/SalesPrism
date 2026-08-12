@@ -60,7 +60,27 @@ const getAzureProvider = (): AzureOpenAIProvider => {
 
   cachedProvider = createAzure({
     resourceName: requireEnv("AZURE_OPENAI_API_INSTANCE_NAME"),
-    apiVersion: process.env.AZURE_OPENAI_API_VERSION || "2025-01-01-preview",
+    // SR-015: default to Azure OpenAI's version-less `v1` surface, which is
+    // also `@ai-sdk/azure`'s own default.
+    //
+    // This used to fall back to the dated preview `2025-01-01-preview`, and
+    // the app setting pinned that same value. Against the gpt-5.x deployments
+    // every chat request failed with
+    //
+    //   AI_APICallError: API version not supported
+    //
+    // and the UI showed only "There was an error generating a response".
+    // Found by sending one real message through the deployed product; no unit
+    // test could have caught it, because the incompatibility lives between the
+    // pinned version and the model that Azure has deployed on the other side.
+    //
+    // A dated preview version is a promise that ages badly: it has to be
+    // bumped by hand every time a newer model lands, and nothing fails until a
+    // customer sends a message. `v1` is Azure's stated forward-compatible
+    // surface and removes that whole class of breakage. The env var is still
+    // honoured so a specific customer can be pinned deliberately, but the
+    // default is no longer a date that will silently expire.
+    apiVersion: process.env.AZURE_OPENAI_API_VERSION || "v1",
     tokenProvider,
   });
 
