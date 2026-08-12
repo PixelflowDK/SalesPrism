@@ -579,3 +579,103 @@ architecture conversation for two weeks.
 `text-embedding-3-large` is deliberately NOT switched on: ADR-001 pre-authorises it, but
 changing embedding dimensions invalidates every existing index document and requires a
 reindex. That is a migration, not a config flip, and should be its own change.
+
+---
+
+## SD-010 — The tenant is Entra ID Free, and two SR-008 criteria depend on P1 (2026-08-12)
+
+`GET /v1.0/subscribedSkus` returns an empty list. Tenant `d4b1b55b-…` holds **no Entra
+licenses at all**. This was discovered while trying to read authentication-method
+registration state, which returned
+`Authentication_RequestFromNonPremiumTenantOrB2CTenant`.
+
+It reframes two things that had been read as oversights.
+
+### "Zero Conditional Access policies" is a licensing fact, not a gap
+
+Conditional Access requires Entra ID P1. **No CA policy can exist in this tenant.** The
+SR-008 criterion "excluded from Conditional Access policies that could block emergency
+sign-in" is therefore *vacuously* satisfied — and will stay vacuous until someone buys P1.
+
+The runbook's warning still stands and becomes live the moment a licence is purchased:
+break-glass accounts must be excluded from the very first CA policy, not retrofitted after.
+
+### The break-glass sign-in alert is currently INERT — verified, not assumed
+
+Entra sign-in log export to Log Analytics also requires P1. The diagnostic setting
+`sales-prism-entra-signins` was created and **persists**, reporting `SignInLogs`,
+`AuditLogs` and `NonInteractiveUserSignInLogs` as enabled — it looks correct in every
+listing.
+
+It delivers nothing. Forty minutes after configuration, across several real interactive
+sign-ins and sign-outs, `SigninLogs` and `AuditLogs` are empty. The control rules out a
+workspace problem: the same workspace received 4,797 `AppDependencies`, 906
+`AppPerformanceCounters` and 329 `AppRequests` in the same window.
+
+So `alert-breakglass-signin` (severity 0, action group attached, enabled) will never fire.
+This is the H-5 trap exactly — "the alert exists, therefore we are covered" — and it was
+about to be repeated by the same person who documented it. The rule that catches it is the
+one already written down: **an alert is not monitoring until data has been observed
+reaching the query it runs.**
+
+The alert is deliberately left in place rather than deleted: it costs nothing, it is
+correct, and it starts working the moment P1 is licensed. It is recorded here and in
+`known-limitations.md` as INERT so nobody mistakes its existence for coverage.
+
+### Consequence for SR-008
+
+Eight of the ten criteria are met or are met by a human action. Two — CA exclusion and
+alert-backed monitoring — **cannot be met on a Free tenant at any effort**. That is a
+commercial decision (Entra ID P1, roughly €6/user/month), not an engineering gap, and it
+belongs to the operator.
+
+---
+
+## SD-011 — H-3 enforcement is a production requirement, per SAD §16.2 (2026-08-12)
+
+Recorded because it would be convenient, and wrong, to reclassify H-3 as optional
+hardening now that everything else is green.
+
+SAD §16.2 states the guarantee conditionally, in its own words:
+
+> "Hård gardering (efter assignment — IKKE endnu aktiv) — fejlkonfiguration i Bicep kan
+> ikke resultere i data der forlader EU, **forudsat operatøren gennemfører
+> assignment-trinnet ovenfor**."
+
+The EU-data-boundary guarantee is explicitly contingent on the assignment step. That
+guarantee backs requirements **R1** ("Alle Azure-ressourcer deployes i northeurope eller
+westeurope — GDPR EU-dataopbevaring") and **R2** ("Data Zone Standard — aldrig Global
+Standard — GDPR, forhindrer datarouting udenfor EU"), both listed as hard requirements
+with GDPR justification.
+
+The same section describes what remains without it: enforcement is only the `@allowed()`
+Bicep decorators, and "en simpel PR der fjerner en decorator ville have kunnet omgå det
+fuldstændigt". `DoNotEnforce` evaluates and reports; it denies nothing. So today the SAD's
+stated guarantee is not true.
+
+**H-3 is therefore a production gate, and production stays NOT READY until the assignment
+is `Default`.** No governing document classifies it as advisory.
+
+Two independent things now block that flip, and both are human by design:
+
+1. **The SAD assigns it to a human.** "Bevidst IKKE gjort af denne agent… en
+   abonnements-bred `deny`-policy er en operatørbeslutning med reelt blast-radius… skal
+   gennemføres bevidst af Kristjan, ikke af en agent."
+2. **The agent execution-policy classifier blocks it**, at both the direct and the
+   script-wrapped path. Not retried further: re-wrapping a blocked call until it slips
+   through is a bypass, not a workaround.
+
+The analysis supporting the flip is complete and clean: 107 evaluated, 107 compliant, no
+unrelated production resource in deny scope, `swedencentral` (where the operator's other
+workload lives) inside the allowed set, and the tag policy scoped to `rg-azurechat-*`.
+
+### A live positive test of the policy, obtained by accident
+
+After the re-scan, one resource turned non-compliant: `alert-breakglass-signin` — the alert
+this session had just created, missing the four standard tags. The policy caught a
+brand-new, genuinely non-conforming resource within minutes.
+
+That is a real positive test rather than an argued one: under `Default` that creation would
+have been **denied**. The resource has been tagged and is compliant again. It also
+demonstrates the enforcement's practical cost — every automation path must tag what it
+creates, including ad-hoc operator scripts.

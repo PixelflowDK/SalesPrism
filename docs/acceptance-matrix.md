@@ -1,6 +1,6 @@
 # Sales Prism — Canonical Acceptance Matrix
 
-**Generated:** 2026-08-12 · **Commit:** `8838c9f` · **Deployed & verified live:** `8838c9f`
+**Generated:** 2026-08-12 · **Commit:** `28b94c2` · **Deployed & verified live:** `28b94c2`
 **Environment:** validation (`val1`) — https://val1-sales360.pixelflow.dk
 **Scope:** SAD v2.7 Phases A–F, Feature Backlog V1 (F-01..F-04). Phases G–H and V2/V3 excluded.
 
@@ -116,8 +116,8 @@ together by `access-control.spec.ts`.
 | CR2-1/2/4/5 | HIGH | Speech route hardening, CSV formula injection | CLOSED |
 | CR2-3 | HIGH | GDPR erasure + retention for new containers | CLOSED |
 | H-2, H-5 | MED | (infra) | CLOSED |
-| H-3 | MED | Azure Policy claimed in SAD §16.2 but never assigned | **PARTIAL** — 3 definitions + initiative deployed and assigned at subscription scope in `DoNotEnforce` (audit only, denies nothing). Flip to `Default` is an operator decision. |
-| SR-008 | HIGH | No Entra break-glass accounts | **OPEN — BLOCKS PRODUCTION.** Operator-only: account creation and password escrow are not automatable. Runbook + acceptance test: `docs/runbooks/SR-008-break-glass-accounts.md` |
+| H-3 | **PRODUCTION GATE** | Azure Policy claimed in SAD §16.2 but not enforced | **BLOCKED BY GENUINE HUMAN/PLATFORM DEPENDENCY.** Definitions + initiative deployed, corrected and assigned; audit clean (107/107 compliant, no unrelated resource in deny scope). Still `DoNotEnforce`, which denies nothing. NOT optional: SAD §16.2 makes the EU guarantee conditional on the assignment, backing GDPR R1/R2 — see SD-011. Blocked by the SAD's own operator-only designation AND the agent execution-policy classifier. |
+| SR-008 | **PRODUCTION GATE** | No Entra break-glass accounts | **OPEN.** 2 accounts exist, enabled, cloud-only, on the initial domain, both permanent Global Administrator (tenant went from 1 GA to 3). Remaining: (a) human authenticator enrollment — irreducible; (b) 2 of 10 criteria (CA exclusion, alert-backed monitoring) need Entra ID P1, which the tenant does not have — see SD-010. |
 
 ---
 
